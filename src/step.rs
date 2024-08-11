@@ -3,15 +3,46 @@ use std::num::{Saturating, Wrapping};
 pub trait Step: Sized {
     fn zero() -> Self;
     fn is_zero(self) -> bool;
+
     fn inc_by(self, amount: i8) -> Self;
 
-    fn from_isize(self, amount: i8) -> Self {
+    fn inc_by_isize(mut self, mut amount: isize) -> Self {
+        if let Ok(v) = i8::try_from(amount) {
+            return self.inc_by(v);
+        }
+
+        if amount < 0 {
+            while amount < -128 {
+                amount -= -128;
+                self = self.inc_by(-128);
+            }
+            self.inc_by(
+                amount
+                    .try_into()
+                    .expect("amount is greater than or equal to -128"),
+            )
+        } else {
+            while amount > 127 {
+                amount -= 127;
+                self = self.inc_by(127);
+            }
+            self.inc_by(
+                amount
+                    .try_into()
+                    .expect("amount is less than or equal to 127"),
+            )
+        }
+    }
+
+    fn from_i8(self, amount: i8) -> Self {
         Self::zero().inc_by(amount)
     }
+
+    fn into_isize(self) -> isize;
 }
 
 macro_rules! impl_step {
-    ($x:ty, $zero:expr, $one:expr, $self:ident, $amount:ident, $add:expr) => {
+    ($x:ty, $zero:expr, $one:expr, $self:ident, $amount:ident, $add:expr, $into_isize:expr) => {
         impl Step for $x {
             fn zero() -> Self {
                 $zero
@@ -23,6 +54,10 @@ macro_rules! impl_step {
 
             fn inc_by($self, $amount: i8) -> Self {
                 $add
+            }
+
+            fn into_isize($self) -> isize {
+                $into_isize
             }
         }
     };
@@ -37,7 +72,8 @@ macro_rules! impl_step_all_u {
             self,
             amount,
             self.checked_add_signed(amount.into())
-                .expect("overflows are not allowed")
+                .expect("overflows are not allowed"),
+            self.try_into().expect("should fit in an isize")
         );
         impl_step!(
             Wrapping<$x>,
@@ -45,7 +81,8 @@ macro_rules! impl_step_all_u {
             Wrapping(1),
             self,
             amount,
-            Wrapping(self.0.wrapping_add_signed(amount.into()))
+            Wrapping(self.0.wrapping_add_signed(amount.into())),
+            self.0.try_into().expect("should fit in an isize")
         );
         impl_step!(
             Saturating<$x>,
@@ -53,7 +90,8 @@ macro_rules! impl_step_all_u {
             Saturating(1),
             self,
             amount,
-            Saturating(self.0.saturating_add_signed(amount.into()))
+            Saturating(self.0.saturating_add_signed(amount.into())),
+            self.0.try_into().expect("should fit in an isize")
         );
     };
 }
@@ -74,7 +112,8 @@ macro_rules! impl_step_all_i {
             1,
             self,
             amount,
-            self + <i8 as Into<Self>>::into(amount)
+            self + <i8 as Into<Self>>::into(amount),
+            self.try_into().expect("should fit in an isize")
         );
         impl_step!(
             Wrapping<$x>,
@@ -82,7 +121,8 @@ macro_rules! impl_step_all_i {
             Wrapping(1),
             self,
             amount,
-            Wrapping(self.0.wrapping_add(amount.into()))
+            Wrapping(self.0.wrapping_add(amount.into())),
+            self.0.try_into().expect("should fit in an isize")
         );
         impl_step!(
             Saturating<$x>,
@@ -90,7 +130,8 @@ macro_rules! impl_step_all_i {
             Saturating(1),
             self,
             amount,
-            Saturating(self.0.saturating_add(amount.into()))
+            Saturating(self.0.saturating_add(amount.into())),
+            self.0.try_into().expect("should fit in an isize")
         );
     };
 }
@@ -126,6 +167,18 @@ impl Step for bool {
             },
         }
     }
+
+    fn from_i8(self, amount: i8) -> Self {
+        match amount {
+            0 => false,
+            1 => true,
+            _ => panic!("value is outside `bool` bounds"),
+        }
+    }
+
+    fn into_isize(self) -> isize {
+        self.into()
+    }
 }
 
 impl Step for Wrapping<bool> {
@@ -139,6 +192,14 @@ impl Step for Wrapping<bool> {
 
     fn inc_by(self, amount: i8) -> Self {
         Wrapping(self.0 == (amount % 2 == 0))
+    }
+
+    fn from_i8(self, amount: i8) -> Self {
+        Wrapping(amount % 2 != 0)
+    }
+
+    fn into_isize(self) -> isize {
+        self.0.into()
     }
 }
 
@@ -162,5 +223,16 @@ impl Step for Saturating<bool> {
                 _ => true,
             },
         })
+    }
+
+    fn from_i8(self, amount: i8) -> Self {
+        match amount {
+            ..=0 => Saturating(false),
+            1.. => Saturating(true),
+        }
+    }
+
+    fn into_isize(self) -> isize {
+        self.0.into()
     }
 }

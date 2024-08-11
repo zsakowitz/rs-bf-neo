@@ -1,4 +1,7 @@
-use std::{cell::RefCell, fmt::Debug, marker::PhantomData};
+use std::{
+    cell::{RefCell, RefMut},
+    fmt::Debug,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellState {
@@ -7,12 +10,15 @@ pub enum CellState {
     Unknown,
 }
 
-pub struct Builder<const N: usize> {
+pub struct Builder {
     /// If an `Option<CellState>` is `None`, it means it's currently loaned out. If it's
     /// `Some<...>`, then the cell is not in use anywhere.
-    data: RefCell<[Option<CellState>; N]>,
-    /// Sorted list of available indices, with the lowest index at the end.
+    data: RefCell<Vec<Option<CellState>>>,
+    /// Sorted list of available indices, with the lowest index at the end. More indices can be
+    /// appended to the beginning as the program runs.
     available: RefCell<Vec<usize>>,
+    source: RefCell<String>,
+    pointer: RefCell<usize>,
 }
 
 struct Q<T>(T);
@@ -30,7 +36,7 @@ impl Debug for Q<&[Option<CellState>]> {
     }
 }
 
-impl<const N: usize> Debug for Builder<N> {
+impl Debug for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let data = self.data.borrow();
         let available = self.available.borrow();
@@ -43,17 +49,30 @@ impl<const N: usize> Debug for Builder<N> {
 }
 
 // internal methods go here
-impl<const N: usize> Builder<N> {
-    fn internal_try_reserve(&self) -> Option<(usize, CellState)> {
+impl Builder {
+    fn source(&self) -> RefMut<String> {
+        self.source.borrow_mut()
+    }
+
+    fn pointer(&self) -> RefMut<usize> {
+        self.pointer.borrow_mut()
+    }
+
+    fn internal_reserve(&self) -> (usize, CellState) {
         let mut data = self.data.borrow_mut();
         let mut available = self.available.borrow_mut();
 
-        let index = available.pop()?;
+        let Some(index) = available.pop() else {
+            let index = data.len();
+            data.push(None);
+            return (index, CellState::Zeroed);
+        };
+
         let Some(state) = data[index] else {
             panic!("the `self.available` vector had malformed data")
         };
         data[index] = None;
-        return Some((index, state));
+        return (index, state);
     }
 
     fn internal_return_reserved(&self, index: usize, state: CellState) {
@@ -69,15 +88,14 @@ impl<const N: usize> Builder<N> {
         available.insert(point, index);
     }
 
-    fn internal_try_reserve_block(&self, count: usize) -> Option<(usize, Vec<CellState>)> {
+    fn internal_try_reserve_block(&self, count: usize) -> (usize, Vec<CellState>) {
         if count == 0 {
-            return Some((0, Vec::new()));
+            return (0, Vec::new());
         }
 
         if count == 1 {
-            return self
-                .internal_try_reserve()
-                .map(|(index, state)| (index, vec![state]));
+            let (index, state) = self.internal_reserve();
+            return (index, vec![state]);
         }
 
         let mut data = self.data.borrow_mut();
@@ -95,7 +113,15 @@ impl<const N: usize> Builder<N> {
                 }
             }
 
-            return None;
+            // Unable to allocate using existing memory, so invent some. If the programmer wants
+            // memory closer together, they should just use an increased initial capacity.
+
+            let index = data.len();
+            for _ in 0..count {
+                data.push(None);
+            }
+
+            return (index, vec![CellState::Zeroed; count]);
         };
 
         available.drain(index_in_available + 1 - count..=index_in_available);
@@ -110,84 +136,181 @@ impl<const N: usize> Builder<N> {
             data[i] = None;
         }
 
-        return Some((cell_index, states));
+        return (cell_index, states);
     }
 }
 
 // public methods go here
-impl<const N: usize> Builder<N> {
+impl Builder {
     pub fn new() -> Self {
         Self {
-            data: RefCell::new([Some(CellState::Zeroed); N]),
-            available: RefCell::new((0..N).rev().collect()),
+            data: RefCell::new(Vec::new()),
+            available: RefCell::new(Vec::new()),
+            source: Default::default(),
+            pointer: Default::default(),
         }
     }
 
-    pub fn try_reserve<T>(&self) -> Option<Cell<N, T>> {
-        self.internal_try_reserve().map(|(index, state)| Cell {
-            builder: &self,
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            data: RefCell::new(vec![Some(CellState::Zeroed); capacity]),
+            available: RefCell::new((0..capacity).rev().collect()),
+            source: Default::default(),
+            pointer: Default::default(),
+        }
+    }
+}
+
+// reservation methods
+impl Builder {
+    /// SAFETY: the caller must ensure it does not rely on the previous value of the cell
+    pub unsafe fn volatile<'a, T: Reservable<'a>>(&'a self) -> T
+    where
+        T::Options: Default,
+    {
+        T::reserve_volatile(&self, Default::default())
+    }
+
+    /// Ensures the returned cells are zeroed.
+    pub fn zeroed<'a, T: Reservable<'a> + EnsureZeroed>(&'a self) -> T
+    where
+        T::Options: Default,
+    {
+        let mut data: T = unsafe { self.volatile() };
+        data.ensure_zeroed();
+        data
+    }
+
+    /// SAFETY: the caller must ensure it does not rely on the previous value of the cell
+    pub unsafe fn volatile_of<'a, T: Reservable<'a>>(&'a self, options: T::Options) -> T {
+        T::reserve_volatile(&self, options)
+    }
+
+    /// Ensures the returned cells are zeroed.
+    pub fn zeroed_of<'a, T: Reservable<'a> + EnsureZeroed>(&'a self, options: T::Options) -> T {
+        let mut data: T = unsafe { self.volatile_of(options) };
+        data.ensure_zeroed();
+        data
+    }
+}
+
+pub trait EnsureZeroed {
+    fn ensure_zeroed(&mut self);
+}
+
+pub trait Reservable<'a>: Sized {
+    type Options;
+    unsafe fn reserve_volatile(builder: &'a Builder, options: Self::Options) -> Self;
+}
+
+impl<'a> Reservable<'a> for Cell<'a> {
+    type Options = ();
+    unsafe fn reserve_volatile(builder: &'a Builder, _: Self::Options) -> Self {
+        let (index, state) = builder.internal_reserve();
+
+        Cell {
+            builder,
             index,
-            phantom: PhantomData,
-            state,
-        })
+            state: state.into(),
+        }
     }
+}
 
-    pub fn reserve<T>(&self) -> Cell<N, T> {
-        self.try_reserve().expect("failed to allocate a cell")
+impl<'a, const M: usize> EnsureZeroed for [Cell<'a>; M] {
+    fn ensure_zeroed(&mut self) {
+        for cell in self {
+            cell.zero();
+        }
     }
+}
 
-    pub fn try_reserve_block<T>(&self, count: usize) -> Option<Vec<Cell<N, T>>> {
-        self.internal_try_reserve_block(count)
-            .map(|(index, states)| {
-                states
-                    .into_iter()
-                    .enumerate()
-                    .map(|(offset, state)| Cell {
-                        builder: &self,
-                        index: index + offset,
-                        phantom: PhantomData,
-                        state,
-                    })
-                    .collect()
+impl<'a, const M: usize> Reservable<'a> for [Cell<'a>; M] {
+    type Options = ();
+    unsafe fn reserve_volatile(builder: &'a Builder, _: Self::Options) -> Self {
+        let (index, states) = builder.internal_try_reserve_block(M);
+
+        states
+            .into_iter()
+            .enumerate()
+            .map(|(offset, state)| Cell {
+                builder,
+                index: index + offset,
+                state: state.into(),
             })
-    }
-
-    pub fn reserve_block<T>(&self, count: usize) -> Vec<Cell<N, T>> {
-        self.try_reserve_block(count)
-            .expect("failed to allocate cell block")
-    }
-
-    pub fn try_reserve_const<const M: usize, T>(&self) -> Option<[Cell<N, T>; M]> {
-        self.internal_try_reserve_block(M).map(|(index, states)| {
-            states
-                .into_iter()
-                .enumerate()
-                .map(|(offset, state)| Cell {
-                    builder: &self,
-                    index: index + offset,
-                    phantom: PhantomData,
-                    state,
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .expect("we should have reserved the correct number of cells")
-        })
-    }
-
-    pub fn reserve_const<const M: usize, T>(&self) -> [Cell<N, T>; M] {
-        self.try_reserve_const()
-            .expect("failed to allocate cell block")
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("we should have reserved the correct number of cells")
     }
 }
 
-pub struct Cell<'a, const N: usize, T> {
-    builder: &'a Builder<N>,
-    index: usize,
-    phantom: PhantomData<T>,
-    state: CellState,
+impl<'a> EnsureZeroed for Vec<Cell<'a>> {
+    fn ensure_zeroed(&mut self) {
+        for cell in self {
+            cell.zero();
+        }
+    }
 }
 
-impl<'a, const N: usize, T> Debug for Cell<'a, N, T> {
+// impl<'a> Reservable<'a> for Vec<Cell<'a>> {
+//     type Options = usize;
+
+//     unsafe fn reserve_volatile(builder: &'a Builder, count: Self::Options) -> Self {
+//         let (index, states) = builder.internal_try_reserve_block(count);
+
+//         states
+//             .into_iter()
+//             .enumerate()
+//             .map(|(offset, state)| Cell {
+//                 builder,
+//                 index: index + offset,
+//                 state: RefCell::new(state),
+//             })
+//             .collect()
+//     }
+// }
+
+macro_rules! tuple {
+    ($($idx:tt $name:ident $comma:tt)*) => {
+        impl<'a $(, $name)*> EnsureZeroed for ($($name,)*)
+        where
+            $($name: EnsureZeroed,)*
+        {
+            fn ensure_zeroed(&mut self) {
+                $(self.$idx.ensure_zeroed();)*
+            }
+        }
+
+        impl<'a> Reservable<'a> for ($(Cell<'a> $comma)*)
+        {
+            type Options = ();
+            unsafe fn reserve_volatile(_builder: &'a Builder, _options: Self::Options) -> Self {
+                ($(Cell::reserve_volatile(_builder, ()) $comma)*)
+            }
+        }
+    };
+}
+
+tuple!();
+tuple!(0 A,);
+tuple!(0 A, 1 B,);
+tuple!(0 A, 1 B, 2 C,);
+tuple!(0 A, 1 B, 2 C, 3 D,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H, 8 I,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H, 8 I, 9 J,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H, 8 I, 9 J, 10 K,);
+tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H, 8 I, 9 J, 10 K, 11 L,);
+
+pub struct Cell<'a> {
+    pub(crate) builder: &'a Builder,
+    pub(crate) index: usize,
+    state: RefCell<CellState>,
+}
+
+impl<'a> Debug for Cell<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Cell")
             .field("index", &self.index)
@@ -196,9 +319,97 @@ impl<'a, const N: usize, T> Debug for Cell<'a, N, T> {
     }
 }
 
-impl<'a, const N: usize, T> Drop for Cell<'a, N, T> {
+impl<'a> Drop for Cell<'a> {
     fn drop(&mut self) {
         self.builder
-            .internal_return_reserved(self.index, self.state)
+            .internal_return_reserved(self.index, *self.state.borrow())
+    }
+}
+
+// cell methods which require internal access go here
+impl<'a> Cell<'a> {
+    pub fn goto(&self) {
+        let mut source = self.builder.source();
+        let mut pointer = self.builder.pointer();
+
+        if *pointer < self.index {
+            *source += &">".repeat(self.index - *pointer);
+        } else {
+            *source += &"<".repeat(self.index - *pointer);
+        }
+
+        *pointer = self.index;
+    }
+
+    pub(super) fn inc_internal(&self) {
+        self.goto();
+        *self.builder.source() += "+";
+        *self.state.borrow_mut() = CellState::Unknown;
+    }
+
+    pub(super) fn dec_internal(&self) {
+        self.goto();
+        *self.builder.source() += "-";
+        *self.state.borrow_mut() = CellState::Unknown;
+    }
+
+    pub(super) fn read_internal(&self) {
+        self.goto();
+        *self.builder.source() += ",";
+        *self.state.borrow_mut() = CellState::Unknown;
+    }
+
+    pub fn write(&self) {
+        self.goto();
+        *self.builder.source() += ".";
+    }
+
+    pub fn while_nonzero<V>(&self, f: impl FnOnce() -> V) -> V {
+        self.goto();
+        *self.builder.source() += "[";
+        let v = f();
+        self.goto();
+        *self.builder.source() += "]";
+        self.assume_zero_internal();
+        v
+    }
+
+    pub fn while_nonzero_mut<V>(&mut self, f: impl FnOnce(&mut Self) -> V) -> V {
+        self.goto();
+        *self.builder.source() += "[";
+        let v = f(self);
+        self.goto();
+        *self.builder.source() += "]";
+        self.assume_zero_internal();
+        v
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        match *self.state.borrow() {
+            CellState::Zeroed => false,
+            CellState::Unknown => true,
+        }
+    }
+
+    pub fn assume_dirty(&self) {
+        *self.state.borrow_mut() = CellState::Unknown
+    }
+
+    pub(super) fn assume_zero_internal(&self) {
+        *self.state.borrow_mut() = CellState::Zeroed
+    }
+
+    // SAFETY: the caller must ensure this cell is actually zero
+    pub unsafe fn assume_zero(&self) {
+        self.assume_zero_internal();
+    }
+
+    pub(super) fn zero_internal(&self) {
+        if *self.state.borrow() == CellState::Zeroed {
+            return;
+        }
+        self.goto();
+        *self.builder.source() += "[-]";
+        self.assume_zero_internal();
     }
 }
