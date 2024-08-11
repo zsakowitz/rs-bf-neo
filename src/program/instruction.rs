@@ -1,9 +1,7 @@
 #[derive(Clone, Copy, Debug)]
 pub enum Instruction {
-    Inc,
-    Dec,
-    Shl,
-    Shr,
+    IncBy(i8),
+    Shift(isize),
     Read,
     Write,
     /// The `usize` here is the index of the corresponding LoopEnd.

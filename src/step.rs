@@ -1,49 +1,107 @@
 use std::num::{Saturating, Wrapping};
 
-pub trait Step {
+pub trait Step: Sized {
     fn zero() -> Self;
     fn is_zero(self) -> bool;
-    fn inc(self) -> Self;
-    fn dec(self) -> Self;
+    fn inc_by(self, amount: i8) -> Self;
+
+    fn from_isize(self, amount: i8) -> Self {
+        Self::zero().inc_by(amount)
+    }
 }
 
 macro_rules! impl_step {
-    ($x:ty, $zero:expr, $one:expr) => {
+    ($x:ty, $zero:expr, $one:expr, $self:ident, $amount:ident, $add:expr) => {
         impl Step for $x {
             fn zero() -> Self {
                 $zero
             }
 
-            fn is_zero(self) -> bool {
-                self == $zero
+            fn is_zero($self) -> bool {
+                $self == $zero
             }
 
-            fn inc(self: Self) -> Self {
-                self + $one
-            }
-
-            fn dec(self: Self) -> Self {
-                self - $one
+            fn inc_by($self, $amount: i8) -> Self {
+                $add
             }
         }
     };
 }
 
-macro_rules! impl_step_all {
+macro_rules! impl_step_all_u {
     ($x:ident) => {
-        impl_step!($x, 0, 1);
-        impl_step!(Wrapping<$x>, Wrapping(0), Wrapping(1));
-        impl_step!(Saturating<$x>, Saturating(0), Saturating(1));
+        impl_step!(
+            $x,
+            0,
+            1,
+            self,
+            amount,
+            self.checked_add_signed(amount.into())
+                .expect("overflows are not allowed")
+        );
+        impl_step!(
+            Wrapping<$x>,
+            Wrapping(0),
+            Wrapping(1),
+            self,
+            amount,
+            Wrapping(self.0.wrapping_add_signed(amount.into()))
+        );
+        impl_step!(
+            Saturating<$x>,
+            Saturating(0),
+            Saturating(1),
+            self,
+            amount,
+            Saturating(self.0.saturating_add_signed(amount.into()))
+        );
     };
 }
 
-macro_rules! impl_step_all_each {
+macro_rules! impl_step_all_each_u {
     ($($x:ident),+) => {
-        $(impl_step_all!($x);)+
+        $(impl_step_all_u!($x);)+
     };
 }
 
-impl_step_all_each!(u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize);
+impl_step_all_each_u!(u8, u16, u32, u64, u128, usize);
+
+macro_rules! impl_step_all_i {
+    ($x:ident) => {
+        impl_step!(
+            $x,
+            0,
+            1,
+            self,
+            amount,
+            self + <i8 as Into<Self>>::into(amount)
+        );
+        impl_step!(
+            Wrapping<$x>,
+            Wrapping(0),
+            Wrapping(1),
+            self,
+            amount,
+            Wrapping(self.0.wrapping_add(amount.into()))
+        );
+        impl_step!(
+            Saturating<$x>,
+            Saturating(0),
+            Saturating(1),
+            self,
+            amount,
+            Saturating(self.0.saturating_add(amount.into()))
+        );
+    };
+}
+
+macro_rules! impl_step_all_each_i {
+    ($($x:ident),+) => {
+        $(impl_step_all_i!($x);)+
+    };
+}
+
+impl_step_all_each_i!(i8, i16, i32, i64, i128, isize);
 
 impl Step for bool {
     fn zero() -> Self {
@@ -54,19 +112,18 @@ impl Step for bool {
         !self
     }
 
-    fn inc(self) -> Self {
-        if self {
-            panic!("cannot increment `true`")
-        } else {
-            true
-        }
-    }
-
-    fn dec(self) -> Self {
-        if self {
-            false
-        } else {
-            panic!("cannot decrement `false`")
+    fn inc_by(self, amount: i8) -> Self {
+        match self {
+            false => match amount {
+                0 => false,
+                1 => true,
+                _ => panic!("changed `false` by too much"),
+            },
+            true => match amount {
+                -1 => false,
+                0 => true,
+                _ => panic!("changed `true` by too much"),
+            },
         }
     }
 }
@@ -80,12 +137,8 @@ impl Step for Wrapping<bool> {
         !self.0
     }
 
-    fn inc(self) -> Self {
-        Wrapping(!self.0)
-    }
-
-    fn dec(self) -> Self {
-        Wrapping(!self.0)
+    fn inc_by(self, amount: i8) -> Self {
+        Wrapping(self.0 == (amount % 2 == 0))
     }
 }
 
@@ -98,11 +151,16 @@ impl Step for Saturating<bool> {
         !self.0
     }
 
-    fn inc(self) -> Self {
-        Saturating(true)
-    }
-
-    fn dec(self) -> Self {
-        Saturating(false)
+    fn inc_by(self, amount: i8) -> Self {
+        Saturating(match self.0 {
+            false => match amount {
+                1.. => true,
+                _ => false,
+            },
+            true => match amount {
+                ..=-1 => false,
+                _ => true,
+            },
+        })
     }
 }

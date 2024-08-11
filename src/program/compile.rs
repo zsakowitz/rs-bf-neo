@@ -31,10 +31,35 @@ impl Program {
 
         for char in source.chars() {
             match char {
-                '+' => output.push(Instruction::Inc),
-                '-' => output.push(Instruction::Dec),
-                '<' => output.push(Instruction::Shl),
-                '>' => output.push(Instruction::Shl),
+                '+' | '-' => {
+                    let value = if char == '-' { -1 } else { 1 };
+                    let last = output.last_mut();
+                    if let Some(Instruction::IncBy(ref mut prev_value)) = last {
+                        if let Some(next) = prev_value.checked_add(value) {
+                            if next == 0 {
+                                output.pop();
+                                continue;
+                            }
+                            *prev_value = next;
+                        } else {
+                            output.push(Instruction::IncBy(value));
+                        }
+                    } else {
+                        output.push(Instruction::IncBy(value));
+                    }
+                }
+                '<' | '>' => {
+                    let value = if char == '<' { -1 } else { 1 };
+                    let last = output.last_mut();
+                    if let Some(Instruction::Shift(ref mut prev_value)) = last {
+                        *prev_value += value;
+                        if *prev_value == 0 {
+                            output.pop();
+                        }
+                    } else {
+                        output.push(Instruction::Shift(value));
+                    }
+                }
                 ',' => output.push(Instruction::Read),
                 '.' => output.push(Instruction::Write),
                 '[' => {
