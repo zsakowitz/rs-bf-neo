@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt::Debug, marker::PhantomData, mem::forget, ops::Index};
+use std::{cell::RefCell, fmt::Debug, marker::PhantomData};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellState {
@@ -112,13 +112,6 @@ impl<const N: usize> Builder<N> {
 
         return Some((cell_index, states));
     }
-
-    fn internal_return_reserved_block(&self, index: usize, states: &[CellState]) {
-        // TODO: optimize
-        for (offset, state) in states.iter().enumerate() {
-            self.internal_return_reserved(index + offset, *state);
-        }
-    }
 }
 
 // public methods go here
@@ -143,19 +136,47 @@ impl<const N: usize> Builder<N> {
         self.try_reserve().expect("failed to allocate a cell")
     }
 
-    pub fn try_reserve_block<T>(&self, count: usize) -> Option<CellBlock<N, T>> {
+    pub fn try_reserve_block<T>(&self, count: usize) -> Option<Vec<Cell<N, T>>> {
         self.internal_try_reserve_block(count)
-            .map(|(index, states)| CellBlock {
-                builder: &self,
-                index,
-                phantom: PhantomData,
-                states,
+            .map(|(index, states)| {
+                states
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, state)| Cell {
+                        builder: &self,
+                        index: index + offset,
+                        phantom: PhantomData,
+                        state,
+                    })
+                    .collect()
             })
     }
 
-    pub fn reserve_block<T>(&self, count: usize) -> CellBlock<N, T> {
+    pub fn reserve_block<T>(&self, count: usize) -> Vec<Cell<N, T>> {
         self.try_reserve_block(count)
-            .expect("failed to allocate a cell")
+            .expect("failed to allocate cell block")
+    }
+
+    pub fn try_reserve_const<const M: usize, T>(&self) -> Option<[Cell<N, T>; M]> {
+        self.internal_try_reserve_block(M).map(|(index, states)| {
+            states
+                .into_iter()
+                .enumerate()
+                .map(|(offset, state)| Cell {
+                    builder: &self,
+                    index: index + offset,
+                    phantom: PhantomData,
+                    state,
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("we should have reserved the correct number of cells")
+        })
+    }
+
+    pub fn reserve_const<const M: usize, T>(&self) -> [Cell<N, T>; M] {
+        self.try_reserve_const()
+            .expect("failed to allocate cell block")
     }
 }
 
@@ -166,67 +187,18 @@ pub struct Cell<'a, const N: usize, T> {
     state: CellState,
 }
 
+impl<'a, const N: usize, T> Debug for Cell<'a, N, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cell")
+            .field("index", &self.index)
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a, const N: usize, T> Drop for Cell<'a, N, T> {
     fn drop(&mut self) {
         self.builder
             .internal_return_reserved(self.index, self.state)
     }
 }
-
-pub struct CellBlock<'a, const N: usize, T> {
-    builder: &'a Builder<N>,
-    index: usize,
-    phantom: PhantomData<T>,
-    states: Vec<CellState>,
-}
-
-// impl<'a, const N: usize, T> Drop for CellBlock<'a, N, T> {
-//     fn drop(&mut self) {
-//         self.builder
-//             .internal_return_reserved_block(self.index, &self.states)
-//     }
-// }
-
-// impl<'a, const N: usize, T> CellBlock<'a, N, T> {
-//     pub fn for_each(&self, mut f: impl FnMut(&Cell<'a, N, T>)) {
-//         for (offset, state) in self.states.iter().enumerate() {
-//             let cell = Cell::<'a, N, T> {
-//                 index: self.index + offset,
-//                 builder: self.builder,
-//                 phantom: PhantomData,
-//                 state: *state,
-//             };
-
-//             f(&cell);
-
-//             if self.states[offset] != cell.state {
-//                 panic!("cannot change a cell's state in an immutable closure")
-//             }
-
-//             forget(cell);
-//         }
-//     }
-
-//     pub fn for_each_mut(&mut self, mut f: impl FnMut(&mut Cell<'a, N, T>)) {
-//         for offset in 0..self.states.len() {
-//             let mut cell = Cell::<'a, N, T> {
-//                 index: self.index + offset,
-//                 builder: self.builder,
-//                 phantom: PhantomData,
-//                 state: self.states[offset],
-//             };
-
-//             f(&mut cell);
-
-//             self.states[offset] = cell.state;
-
-//             forget(cell);
-//         }
-//     }
-// }
-
-// impl<'a, const N: usize, T> Index<usize> for CellBlock<'a, N, T> {
-//     type Output = Cell<'a, N, T>;
-
-//     fn index(&self, index: usize) -> &Self::Output {}
-// }
