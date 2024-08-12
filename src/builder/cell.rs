@@ -1,7 +1,7 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::{
-    builder::{Cell, EnsureZeroed},
+    builder::{Bool, Cell, EnsureZeroed},
     step::Step,
 };
 
@@ -57,22 +57,22 @@ impl<'a> Cell<'a> {
         new
     }
 
-    pub fn is_nonzero(&self) -> Cell<'a> {
+    pub fn is_nonzero(&self) -> Bool<Cell<'a>> {
         let mut is_nonzero: Cell = self.builder.zeroed();
         self.if_nonzero(|| {
             is_nonzero.inc();
         });
-        is_nonzero
+        unsafe { Bool::new_unsafe(is_nonzero) }
     }
 
     /// Returns `1` if the current cell is zero, and `0` otherwise.
-    pub fn is_zero(&self) -> Cell<'a> {
+    pub fn is_zero(&self) -> Bool<Cell<'a>> {
         let mut is_zero: Cell = self.builder.zeroed();
         is_zero.inc();
         self.if_nonzero(|| {
             is_zero.dec();
         });
-        is_zero
+        unsafe { Bool::new_unsafe(is_zero) }
     }
 
     pub fn if_nonzero(&self, f: impl FnOnce()) {
@@ -92,13 +92,17 @@ impl<'a> Cell<'a> {
     }
 
     pub fn if_zero(&self, f: impl FnOnce()) {
-        self.is_zero().if_nonzero_consuming(f)
+        self.is_zero().if_consuming(f)
     }
 
     /// Calls the first function if this cell is nonzero, and the second if it is zero.
     ///
     /// This cell will be zeroed after this function returns.
-    pub fn if_else_consuming(&mut self, when_nonzero: impl FnOnce(), when_zero: impl FnOnce()) {
+    pub fn if_nonzero_else_consuming(
+        &mut self,
+        when_nonzero: impl FnOnce(),
+        when_zero: impl FnOnce(),
+    ) {
         let mut did_run: Cell = self.builder.zeroed();
         self.while_nonzero(|| {
             self.zero_internal();
@@ -112,7 +116,7 @@ impl<'a> Cell<'a> {
     }
 
     /// Calls the first function if this cell is nonzero, and the second if it is zero.
-    pub fn if_else(&self, when_nonzero: impl FnOnce(), when_zero: impl FnOnce()) {
+    pub fn if_nonzero_else(&self, when_nonzero: impl FnOnce(), when_zero: impl FnOnce()) {
         let (mut cloned, mut did_run) = self.clone_and_zero();
         cloned.while_nonzero_mut(|cloned| {
             cloned.zero();
