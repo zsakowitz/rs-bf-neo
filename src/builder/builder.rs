@@ -21,6 +21,7 @@ pub struct Builder {
     available: RefCell<Vec<usize>>,
     source: RefCell<String>,
     pointer: RefCell<usize>,
+    is_in_loop: RefCell<bool>,
 }
 
 struct Q<T>(T);
@@ -151,7 +152,8 @@ impl Builder {
             data: RefCell::new(Vec::new()),
             available: RefCell::new(Vec::new()),
             source: Default::default(),
-            pointer: Default::default(),
+            pointer: 0.into(),
+            is_in_loop: false.into(),
         }
     }
 
@@ -160,7 +162,8 @@ impl Builder {
             data: RefCell::new(vec![Some(CellState::Zeroed); capacity]),
             available: RefCell::new((0..capacity).rev().collect()),
             source: Default::default(),
-            pointer: Default::default(),
+            pointer: 0.into(),
+            is_in_loop: false.into(),
         }
     }
 
@@ -373,12 +376,15 @@ impl<'a> Cell<'a> {
     }
 
     pub fn while_nonzero<V>(&self, f: impl FnOnce() -> V) -> V {
+        let was_in_loop = *self.builder.is_in_loop.borrow();
+        *self.builder.is_in_loop.borrow_mut() = true;
         self.goto();
         *self.builder.source_mut() += "[";
         let v = f();
         self.goto();
         *self.builder.source_mut() += "]";
         self.assume_zero_internal();
+        *self.builder.is_in_loop.borrow_mut() = was_in_loop;
         v
     }
 
@@ -403,11 +409,16 @@ impl<'a> Cell<'a> {
         *self.state.borrow_mut() = CellState::Unknown
     }
 
+    /// Assumes this cell is zeroed. In a loop, this has no effect.
     pub(super) fn assume_zero_internal(&self) {
-        *self.state.borrow_mut() = CellState::Zeroed
+        if !*self.builder.is_in_loop.borrow() {
+            *self.state.borrow_mut() = CellState::Zeroed
+        }
     }
 
-    // SAFETY: the caller must ensure this cell is actually zero
+    /// SAFETY: the caller must ensure this cell is actually zero
+    ///
+    /// In a loop, this has no effect.
     pub unsafe fn assume_zero(&self) {
         self.assume_zero_internal();
     }

@@ -95,23 +95,55 @@ impl<'a> Cell<'a> {
         self.is_zero().if_nonzero_consuming(f)
     }
 
-    /// Calls the first function when the current cell is zero, and the second if it is nonzero.
-    pub fn if_zero_else_if_nonzero(&self, f_is_zero: impl FnOnce(), f_is_nonzero: impl FnOnce()) {}
-}
+    /// Calls the first function if this cell is nonzero, and the second if it is zero.
+    ///
+    /// This cell will be zeroed after this function returns.
+    pub fn if_else_consuming(&mut self, when_nonzero: impl FnOnce(), when_zero: impl FnOnce()) {
+        let mut did_run: Cell = self.builder.zeroed();
+        self.while_nonzero(|| {
+            self.zero_internal();
+            did_run.inc();
+            when_nonzero();
+        });
+        did_run.while_nonzero_mut(|did_run| {
+            did_run.zero();
+            when_zero();
+        });
+    }
 
-impl<'a> Clone for Cell<'a> {
-    fn clone(&self) -> Self {
-        let [mut returned, mut temp] = self.builder.zeroed();
+    /// Calls the first function if this cell is nonzero, and the second if it is zero.
+    pub fn if_else(&self, when_nonzero: impl FnOnce(), when_zero: impl FnOnce()) {
+        let (mut cloned, mut did_run) = self.clone_and_zero();
+        cloned.while_nonzero_mut(|cloned| {
+            cloned.zero();
+            did_run.inc();
+            when_nonzero();
+        });
+        did_run.while_nonzero_mut(|did_run| {
+            did_run.zero();
+            when_zero();
+        });
+    }
+
+    /// Returns a clone of this cell and a zeroed cell, in that order.
+    fn clone_and_zero(&self) -> (Cell<'a>, Cell<'a>) {
+        let [mut cloned, mut temp] = self.builder.zeroed();
         self.while_nonzero(|| {
             self.dec_internal();
-            returned.inc();
+            cloned.inc();
             temp.inc();
         });
         temp.while_nonzero_mut(|temp| {
             temp.dec();
             self.inc_internal();
         });
-        returned
+        (cloned, temp)
+    }
+}
+
+impl<'a> Clone for Cell<'a> {
+    fn clone(&self) -> Self {
+        self.clone_and_zero().0
     }
 }
 
