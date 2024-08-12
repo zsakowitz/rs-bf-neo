@@ -1,7 +1,9 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     fmt::Debug,
 };
+
+use crate::program::{CompileError, Program};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellState {
@@ -38,19 +40,21 @@ impl Debug for Q<&[Option<CellState>]> {
 
 impl Debug for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let data = self.data.borrow();
-        let available = self.available.borrow();
-
         f.debug_struct("Builder")
-            .field("data", &Q(&data[..]))
-            .field("available", &available)
+            .field("data", &Q(&self.data.borrow()[..]))
+            .field("available", &self.available.borrow())
+            .field("source", &self.source())
             .finish()
     }
 }
 
 // internal methods go here
 impl Builder {
-    fn source(&self) -> RefMut<String> {
+    pub fn source(&self) -> Ref<String> {
+        self.source.borrow()
+    }
+
+    fn source_mut(&self) -> RefMut<String> {
         self.source.borrow_mut()
     }
 
@@ -158,6 +162,10 @@ impl Builder {
             source: Default::default(),
             pointer: Default::default(),
         }
+    }
+
+    pub fn compile(&self) -> Result<Program, CompileError> {
+        Program::new(&self.source.borrow())
     }
 }
 
@@ -329,13 +337,13 @@ impl<'a> Drop for Cell<'a> {
 // cell methods which require internal access go here
 impl<'a> Cell<'a> {
     pub fn goto(&self) {
-        let mut source = self.builder.source();
+        let mut source = self.builder.source_mut();
         let mut pointer = self.builder.pointer();
 
         if *pointer < self.index {
             *source += &">".repeat(self.index - *pointer);
         } else {
-            *source += &"<".repeat(self.index - *pointer);
+            *source += &"<".repeat(*pointer - self.index);
         }
 
         *pointer = self.index;
@@ -343,43 +351,43 @@ impl<'a> Cell<'a> {
 
     pub(super) fn inc_internal(&self) {
         self.goto();
-        *self.builder.source() += "+";
+        *self.builder.source_mut() += "+";
         *self.state.borrow_mut() = CellState::Unknown;
     }
 
     pub(super) fn dec_internal(&self) {
         self.goto();
-        *self.builder.source() += "-";
+        *self.builder.source_mut() += "-";
         *self.state.borrow_mut() = CellState::Unknown;
     }
 
     pub(super) fn read_internal(&self) {
         self.goto();
-        *self.builder.source() += ",";
+        *self.builder.source_mut() += ",";
         *self.state.borrow_mut() = CellState::Unknown;
     }
 
     pub fn write(&self) {
         self.goto();
-        *self.builder.source() += ".";
+        *self.builder.source_mut() += ".";
     }
 
     pub fn while_nonzero<V>(&self, f: impl FnOnce() -> V) -> V {
         self.goto();
-        *self.builder.source() += "[";
+        *self.builder.source_mut() += "[";
         let v = f();
         self.goto();
-        *self.builder.source() += "]";
+        *self.builder.source_mut() += "]";
         self.assume_zero_internal();
         v
     }
 
     pub fn while_nonzero_mut<V>(&mut self, f: impl FnOnce(&mut Self) -> V) -> V {
         self.goto();
-        *self.builder.source() += "[";
+        *self.builder.source_mut() += "[";
         let v = f(self);
         self.goto();
-        *self.builder.source() += "]";
+        *self.builder.source_mut() += "]";
         self.assume_zero_internal();
         v
     }
@@ -409,7 +417,7 @@ impl<'a> Cell<'a> {
             return;
         }
         self.goto();
-        *self.builder.source() += "[-]";
+        *self.builder.source_mut() += "[-]";
         self.assume_zero_internal();
     }
 }

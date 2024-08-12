@@ -1,4 +1,4 @@
-use std::ops::{AddAssign, SubAssign};
+use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::{
     builder::{Cell, EnsureZeroed},
@@ -44,29 +44,6 @@ impl<'a> Cell<'a> {
                 self.dec();
             }
         }
-    }
-
-    pub fn zero_and_add_into(&mut self, other: &mut Cell<'a>) {
-        self.while_nonzero_mut(|this| {
-            this.dec();
-            other.inc();
-        });
-    }
-
-    pub fn zero_and_add_into_many<const M: usize>(&mut self, other: [&mut Cell<'a>; M]) {
-        self.while_nonzero_mut(|this| {
-            this.dec();
-            for other in other {
-                other.inc();
-            }
-        });
-    }
-
-    pub fn zero_and_sub_from(&mut self, other: &mut Cell<'a>) {
-        self.while_nonzero_mut(|this| {
-            this.dec();
-            other.dec();
-        });
     }
 
     pub fn zero_and_duplicate<const M: usize>(&mut self) -> [Cell<'a>; M] {
@@ -125,20 +102,68 @@ where
 
 // arithmetic assigning with cells
 
-impl<'a> AddAssign<Cell<'a>> for Cell<'a> {
-    fn add_assign(&mut self, mut rhs: Cell<'a>) {
-        rhs.while_nonzero_mut(|other| {
-            other.dec();
+macro_rules! arithmetic {
+    {
+        $trait:ident::$method:ident();
+
+        fn $name:ident(& $lifetime:lifetime mut $self:ident, &mut $rhs:ident) {
+            $($body:stmt;)+
+        }
+    } => {
+        impl<$lifetime> Cell<$lifetime> {
+            #[allow(redundant_semicolons)]
+            pub fn $name(&mut $self, $rhs: &mut Cell<$lifetime>) {
+                $($body;)+
+            }
+        }
+
+        impl<'a> $trait<Cell<'a>> for Cell<'a> {
+            fn $method(&mut self, mut rhs: Cell<'a>) {
+                self.$name(&mut rhs);
+            }
+        }
+    };
+}
+
+arithmetic! {
+    AddAssign::add_assign();
+
+    fn add_assign_and_zero_rhs(&'a mut self, &mut rhs) {
+        rhs.while_nonzero_mut(|rhs| {
+            rhs.dec();
             self.inc();
         });
     }
 }
 
-impl<'a> SubAssign<Cell<'a>> for Cell<'a> {
-    fn sub_assign(&mut self, mut rhs: Cell<'a>) {
-        rhs.while_nonzero_mut(|other| {
-            other.dec();
+arithmetic! {
+    SubAssign::sub_assign();
+
+    fn sub_assign_and_zero_rhs(&'a mut self, &mut rhs) {
+        rhs.while_nonzero_mut(|rhs| {
+            rhs.dec();
             self.dec();
+        });
+    }
+}
+
+arithmetic! {
+    MulAssign::mul_assign();
+
+    fn mul_assign(&'a mut self, &mut rhs) {
+        let [mut iter] = self.zero_and_duplicate();
+        let mut a: Cell = self.builder.zeroed();
+        iter.while_nonzero_mut(|iter| {
+            iter.dec();
+            rhs.while_nonzero_mut(|rhs| {
+                rhs.dec();
+                a.inc();
+            });
+            a.while_nonzero_mut(|a| {
+                a.dec();
+                self.inc();
+                rhs.inc();
+            });
         });
     }
 }
