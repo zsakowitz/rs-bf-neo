@@ -1,0 +1,88 @@
+semi = _{ ";" }
+
+int = @{ ('0'..'9')+ }
+
+reserved = {
+    "inc"
+  | "dec"
+  | "read"
+  | "write"
+  | "goto"
+  | "fn"
+  | "mut"
+  | "each"
+  | "let"
+  | "while"
+  | "exitable"
+  | "exit"
+}
+
+name = @{ !reserved ~ (ID_START ~ ID_CONTINUE*) }
+
+escape_seq = @{ "\\" ~ ("\\" | "'" | "\"" | "n" | "r") }
+char_sq    = @{ (!("\\" | "'" | "\n" | "\r") ~ ANY) | escape_seq }
+char_dq    = @{ (!("\\" | "\"" | "\n" | "\r") ~ ANY) | escape_seq }
+
+target_name     =  { name }
+target_array    =  { "[" ~ (target*) ~ "]" }
+target_percent  =  { "%" }
+target_lit_int  =  { int }
+target_lit_char = @{ "'" ~ char_sq ~ "'" }
+target_lit_str  = @{ "\"" ~ char_dq* ~ "\"" }
+target_expr     = @{ "(" ~ stmt_list_no_semi ~ ")" }
+target_inner    =  {
+    target_name
+  | target_array
+  | target_percent
+  | target_lit_int
+  | target_lit_char
+  | target_lit_str
+  | target_expr
+}
+target          =  { target_inner ~ ("." ~ int)? }
+
+builtin = { "inc" | "dec" | "read" | "write" | "goto" }
+
+stmt_builtin   = @{ builtin ~ WHITESPACE ~ COMMENT* ~ WHITESPACE? ~ target }
+stmt_while     =  { "while" ~ target ~ block }
+stmt_each      =  { "each" ~ target ~ "in" ~ target ~ block }
+stmt_breakable =  { "breakable" ~ target? ~ block }
+stmt_break     =  { "break" }
+stmt_call      = @{ name ~ (WHITESPACE ~ COMMENT* ~ WHITESPACE? ~ target)* }
+
+let_array_fixed_size = { "[" ~ int ~ "]" }
+let_array_auto_size  = { "[" ~ "]" }
+let_array_size       = { let_array_fixed_size | let_array_auto_size }
+let_init             = { "=" ~ target }
+let                  = { "let" ~ WHITESPACE ~ name ~ let_array_size? ~ let_init? }
+
+stmt_needs_semi        = { stmt_builtin | stmt_break | stmt_call | let }
+stmt_no_mandatory_semi = { stmt_while | stmt_each | stmt_breakable }
+
+stmt_list_semi    = {
+    ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))*
+}
+stmt_list_no_semi = {
+    ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))* ~ (stmt_needs_semi | stmt_no_mandatory_semi)
+}
+
+block = _{ "{" ~ stmt_list_semi ~ "}" }
+
+fn_arg    =  { "mut"? ~ target ~ ("=" ~ target)? }
+fn_args   = _{
+    "(" ~ ")"
+  | "(" ~ fn_arg ~ ","? ~ ")"
+  | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ","? ~ ")"
+}
+fn_return = _{ "->" ~ target }
+
+fn = { "fn" ~ name ~ fn_args ~ fn_return? ~ block }
+
+main = _{ SOI ~ fn* ~ EOI }
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+
+COMMENT = _{
+    ("//" ~ ((!("\r" | "\n") ~ ANY)+))
+  | ("/*" ~ (!"*/" ~ ANY)* ~ "*/")
+}

@@ -1,7 +1,41 @@
+## Reserved Words
+
+- whitespace
+- `//`
+- `->`
+- `;`
+- `{`
+- `}`
+- `inc`
+- `dec`
+- `read`
+- `write`
+- `goto`
+- `fn`
+- `mut`
+- `each`
+- `let`
+- `while`
+- `exitable`
+- `exit`
+- `=`
+- `(`
+- `)`
+- `[`
+- `]`
+- `_`
+- `,`
+- `.`
+- `%`
+- integers
+- floats
+- characters
+- strings
+
 ## Function Declarations
 
 ```
-fn hello_world() {
+fn hello_world () {
   let a[_] = "hello world";
 
   each q in a {
@@ -10,7 +44,7 @@ fn hello_world() {
 }
 
 // `->` is not necessary, but specifies a return target for `(...)` expressions
-fn add_and_zero(mut source, mut target) -> target {
+fn add_and_zero (mut source, mut target) -> target {
   while source {
     dec source;
     inc target;
@@ -109,7 +143,7 @@ exitable {
 }
 
 // like plain `exitable`, but uses a pre-existing cell as the zero cell
-exitable at q {
+exitable q {
   exit;
 }
 
@@ -126,11 +160,11 @@ fn_name 23 q let c;
 ## Declarations
 
 ```
-let name             // declares a new local variable
-let name[3]          // declares a block of contiguous local variables
-let name[_] = STR    // declares a block sized to match a string's length
-let name = 78        // initializes a declared value (default is zero)
-let name = 'q'       // initializes a declared value (default is zero)
+let name            // declares a new local variable
+let name[3]         // declares a block of contiguous local variables
+let name[] = STR    // declares a block sized to match a string's length
+let name = 78       // initializes a declared value (default is zero)
+let name = 'q'      // initializes a declared value (default is zero)
 ```
 
 ## Low-Level Statements
@@ -177,4 +211,7 @@ expression-driven programming over pure procedural programming.
 
 // creates a local `%` set to 78, runs a set of statements, then targets `%`
 (mult 2 3 %=78)
+
+// an empty expression throws an error
+() // <-- ERROR
 ```

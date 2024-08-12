@@ -1,3 +1,6 @@
+mod syntax;
+mod tokenize;
+
 enum RcrTarget {
     Retval(usize),
     Local(usize),
