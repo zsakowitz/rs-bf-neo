@@ -1,34 +1,28 @@
-use pest::Parser;
+use std::collections::HashMap;
+
+use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
+#[derive(Clone, Debug, Hash)]
 pub enum TargetInner {
     /// references a local
     Local(u32),
     /// references a block of targets
     Array(Vec<Target>),
-    /// references the automatically-generated percent symbol
-    PercentSymbol,
     /// creates a new local with the given value
     Int(u32),
     /// creates a new local with the given value
     Char(char),
     /// creates a new local with the given value
     Str(String),
-    /// runs the statements inside
-    ExprPercent {
-        expr: Box<Script>,
-        // what target is bound to `%`
-        // defaults to a new cell with value zero
-        target: Option<Box<Target>>,
-    },
-    Expr {
-        expr: Box<Script>,
-    },
+    /// returns the value of the last statement
+    Expr { expr: Box<Script> },
 }
 
+#[derive(Clone, Debug, Hash)]
 pub struct Target {
     inner: TargetInner,
     /// an index into the target (if it's an array)
@@ -37,6 +31,7 @@ pub struct Target {
 
 pub type Script = Vec<Statement>;
 
+#[derive(Clone, Debug, Hash)]
 pub enum BuiltinName {
     Inc,
     Dec,
@@ -45,14 +40,14 @@ pub enum BuiltinName {
     Goto,
 }
 
+#[derive(Clone, Debug, Hash)]
 pub enum LetBinding {
     Single,
     Array(Option<usize>),
 }
 
+#[derive(Clone, Debug, Hash)]
 pub enum Statement {
-    /// runs a builtin command
-    Builtin { name: BuiltinName, target: Target },
     /// declares a variable
     Let {
         binding: LetBinding,
@@ -72,17 +67,24 @@ pub enum Statement {
         body: Script,
     },
     /// only valid in an `Exitable` block
-    Exit,
-    /// runs a function call
+    Break,
+    /// calls a function
     Call { name: u32, args: Vec<Target> },
+    /// calls a builtin function
+    CallBuiltin {
+        name: BuiltinName,
+        args: Vec<Target>,
+    },
 }
 
+#[derive(Clone, Debug, Hash)]
 pub struct FnParam {
     mutable: bool,
     name: u32,
     default: Option<Target>,
 }
 
+#[derive(Clone, Debug, Hash)]
 pub struct FnDeclaration {
     name: u32,
     args: Vec<FnParam>,
@@ -96,6 +98,136 @@ pub struct FnDeclaration {
 #[grammar = "rcr/grammar.pest"] // relative to src
 struct MyParser;
 
-fn parse(input: &str) {
-    let a = MyParser::parse(Rule::main, input);
+struct NameManager {
+    data: HashMap<String, u32>,
+    next: u32,
+}
+
+impl NameManager {
+    fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+            next: 0,
+        }
+    }
+
+    fn get(&mut self, name: &str) -> u32 {
+        if let Some(x) = self.data.get(name) {
+            return *x;
+        }
+        let value = self.next;
+        self.next += 1;
+        *self.data.entry(name.to_string()).or_insert(value)
+    }
+}
+
+fn parse(input: &str) -> Result<(), Error<Rule>> {
+    let mut pairs = MyParser::parse(Rule::stmt_call, input)?;
+    let mut names = NameManager::new();
+
+    let first = pairs.next().unwrap();
+    dbg!(parse_stmt(&mut names, first));
+
+    return Ok(());
+
+    /// Expects a `Rule::target` to be passed.
+    fn parse_target(names: &mut NameManager, pair: Pair<Rule>) -> Target {
+        let mut inner = pair.into_inner();
+        let target_inner = inner.next().unwrap();
+        let int = inner.next();
+
+        return Target {
+            inner: parse_target_inner(names, target_inner.into_inner().next().unwrap()),
+            index: int.map(|x| x.as_str().parse().unwrap()),
+        };
+
+        fn parse_target_inner(names: &mut NameManager, pair: Pair<Rule>) -> TargetInner {
+            match pair.as_rule() {
+                Rule::target_array => {
+                    TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
+                }
+                Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
+                Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
+                Rule::target_lit_str => TargetInner::Str(
+                    pair.into_inner()
+                        .map(|pair| match pair.as_str() {
+                            "\\\\" => "\\",
+                            "\\\"" => "\"",
+                            "\\\n" => "\n",
+                            "\\\r" => "\r",
+                            x => x,
+                        })
+                        .collect(),
+                ),
+                Rule::target_expr => TargetInner::Expr {
+                    expr: Box::new(parse_script(names, pair.into_inner().next().unwrap())),
+                },
+                rule => unreachable!("{rule:?} is not a target"),
+            }
+        }
+    }
+
+    /// Expects a `Rule::stmt_...` to be passed.
+    fn parse_stmt(names: &mut NameManager, pair: Pair<Rule>) -> Statement {
+        match pair.as_rule() {
+            Rule::stmt_break => Statement::Break,
+            Rule::stmt_breakable => {
+                let mut inner = pair.into_inner();
+                let (target, body) = match (inner.next().unwrap(), inner.next()) {
+                    (target, Some(body)) => (Some(target), body),
+                    (body, None) => (None, body),
+                };
+                Statement::Breakable {
+                    target: target.map(|pair| parse_target(names, pair)),
+                    body: parse_script(names, body),
+                }
+            }
+            Rule::stmt_call => {
+                let mut inner = pair.into_inner();
+                let fn_name = inner.next().unwrap().as_str();
+                let args = inner.map(|x| parse_target(names, x)).collect();
+                Statement::CallBuiltin {
+                    name: match fn_name {
+                        "inc" => BuiltinName::Inc,
+                        "dec" => BuiltinName::Dec,
+                        "read" => BuiltinName::Read,
+                        "write" => BuiltinName::Write,
+                        "goto" => BuiltinName::Goto,
+                        name => {
+                            return Statement::Call {
+                                name: names.get(name),
+                                args,
+                            }
+                        }
+                    },
+                    args,
+                }
+            }
+            Rule::stmt_each => {
+                let mut inner = pair.into_inner();
+                inner.next().unwrap();
+                let name = inner.next().unwrap();
+                inner.next().unwrap();
+                let target = inner.next().unwrap();
+                let block = inner.next().unwrap();
+                Statement::Each {
+                    bound: names.get(name.as_str()),
+                    array: parse_target(names, target),
+                    body: parse_script(names, block),
+                }
+            }
+            _ => todo!(),
+        }
+    }
+
+    /// Expects a `Rule::stmt_list_...` to be passed.
+    fn parse_script(names: &mut NameManager, pair: Pair<Rule>) -> Script {
+        vec![]
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test() {
+    parse("inc [c d].2;").unwrap();
 }
