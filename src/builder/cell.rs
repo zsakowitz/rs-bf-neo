@@ -56,6 +56,47 @@ impl<'a> Cell<'a> {
         });
         new
     }
+
+    pub fn is_nonzero(&self) -> Cell<'a> {
+        let mut is_nonzero: Cell = self.builder.zeroed();
+        self.if_nonzero(|| {
+            is_nonzero.inc();
+        });
+        is_nonzero
+    }
+
+    /// Returns `1` if the current cell is zero, and `0` otherwise.
+    pub fn is_zero(&self) -> Cell<'a> {
+        let mut is_zero: Cell = self.builder.zeroed();
+        is_zero.inc();
+        self.if_nonzero(|| {
+            is_zero.dec();
+        });
+        is_zero
+    }
+
+    pub fn if_nonzero(&self, f: impl FnOnce()) {
+        let mut is_nonzero = self.clone();
+        is_nonzero.while_nonzero_mut(|is_nonzero| {
+            is_nonzero.zero();
+            f();
+        });
+    }
+
+    /// This cell will be zero after this function returns.
+    pub fn if_nonzero_consuming(&mut self, f: impl FnOnce()) {
+        self.while_nonzero_mut(|this| {
+            this.zero();
+            f();
+        });
+    }
+
+    pub fn if_zero(&self, f: impl FnOnce()) {
+        self.is_zero().if_nonzero_consuming(f)
+    }
+
+    /// Calls the first function when the current cell is zero, and the second if it is nonzero.
+    pub fn if_zero_else_if_nonzero(&self, f_is_zero: impl FnOnce(), f_is_nonzero: impl FnOnce()) {}
 }
 
 impl<'a> Clone for Cell<'a> {
