@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::BitAndAssign};
 
-use pest::{error::Error, iterators::Pair, Parser};
+use pest::{error::Error, iterators::Pair, pratt_parser::Op, Parser};
 use pest_derive::Parser;
 
 /// Instead of traditional expressions, everything in this language is a target.
@@ -42,8 +42,17 @@ pub enum BuiltinName {
 
 #[derive(Clone, Debug, Hash)]
 pub enum LetBinding {
-    Single,
-    Array(Option<usize>),
+    Standard {
+        name: u32,
+        /// if None, it is not an array
+        /// if Some(None), an auto-sized array
+        /// if Some(Some(size)), an array of size `size`
+        size: Option<Option<usize>>,
+    },
+    Destructured {
+        /// a None in this Vec means the element is ignored
+        els: Vec<Option<u32>>,
+    },
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -122,7 +131,7 @@ impl NameManager {
 }
 
 fn parse(input: &str) -> Result<(), Error<Rule>> {
-    let mut pairs = MyParser::parse(Rule::stmt_call, input)?;
+    let mut pairs = MyParser::parse(Rule::stmt_let, input)?;
     let mut names = NameManager::new();
 
     let first = pairs.next().unwrap();
@@ -216,6 +225,41 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
                     body: parse_script(names, block),
                 }
             }
+            Rule::stmt_while => {
+                let mut inner = pair.into_inner();
+                inner.next().unwrap();
+                let target = inner.next().unwrap();
+                let block = inner.next().unwrap();
+                Statement::While {
+                    target: parse_target(names, target),
+                    body: parse_script(names, block),
+                }
+            }
+            Rule::stmt_let => {
+                let mut inner = pair.into_inner();
+                inner.next().unwrap();
+                let let_bindable = inner.next().unwrap();
+                let let_init = inner.next();
+
+                Statement::Let {
+                    binding: match let_bindable.as_rule() {
+                        Rule::let_bind_dest => todo!(),
+                        Rule::let_bind_standard => {
+                            let mut inner = let_bindable.into_inner();
+                            let name = inner.next().unwrap();
+                            let array_size = inner.next();
+                            LetBinding::Standard {
+                                name: names.get(name.as_str()),
+                                size: array_size.map(|x| {
+                                    x.into_inner().next().map(|y| y.as_str().parse().unwrap())
+                                }),
+                            }
+                        }
+                        _ => unreachable!(),
+                    },
+                    value: let_init.map(|x| parse_target(names, x)),
+                }
+            }
             _ => todo!(),
         }
     }
@@ -229,5 +273,5 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
 #[cfg(test)]
 #[test]
 fn test() {
-    parse("inc [c d].2;").unwrap();
+    parse("let c;").unwrap();
 }

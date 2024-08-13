@@ -44,12 +44,15 @@ stmt_each      = { keyword_each ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
 stmt_call      = { fn_name ~ target* }
-stmt_let       = { keyword_let ~ name ~ let_array_size? ~ let_init? }
+stmt_let       = { keyword_let ~ let_bindable ~ let_init? }
 
-let_array_fixed_size = { "[" ~ int ~ "]" }
-let_array_auto_size  = { "[" ~ "]" }
-let_array_size       = { let_array_fixed_size | let_array_auto_size }
-let_init             = { "=" ~ target }
+let_bindable      = _{ let_bind_dest | let_bind_standard }
+let_bind_standard =  { name ~ let_array_size? }
+let_bind_dest     =  { "[" ~ let_element* ~ "]" }
+let_element       =  { name | "_" }
+
+let_array_size = _{ "[" ~ int? ~ "]" }
+let_init       = _{ "=" ~ target }
 
 stmt_needs_semi        = { stmt_break | stmt_call | stmt_let }
 stmt_no_mandatory_semi = { stmt_while | stmt_each | stmt_breakable }
