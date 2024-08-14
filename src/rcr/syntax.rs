@@ -97,6 +97,8 @@ pub struct FnParam {
 pub struct FnDeclaration {
     name: u32,
     args: Vec<FnParam>,
+    /// an optional rest parameter
+    rest: Option<u32>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
     returns: Option<Target>,

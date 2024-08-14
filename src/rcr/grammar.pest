@@ -17,8 +17,8 @@ reserved = @{
   | "exit"
 }
 
-name_single = @{ !(reserved ~ ID_CONTINUE) ~ (ID_START ~ ID_CONTINUE*) }
-name =        @{ name_single ~ ("::" ~ name_single)* }
+name_single = @{ !(reserved ~ (ID_CONTINUE | "::")) ~ (ID_START ~ ID_CONTINUE*) }
+name        = @{ name_single ~ ("::" ~ name_single)* }
 
 escape_seq = @{ "\\" ~ ("\\" | "\"" | "n" | "r") }
 char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
@@ -67,15 +67,17 @@ stmt_list_no_semi = {
 
 block = _{ "{" ~ stmt_list_semi ~ "}" }
 
-fn_arg    =  { keyword_mut? ~ target ~ ("=" ~ target)? }
+fn_arg    =  { keyword_mut? ~ name ~ ("=" ~ target)? }
+fn_rest   =  { "..." ~ keyword_mut? ~ name }
 fn_args   = _{
-    "(" ~ ")"
-  | "(" ~ fn_arg ~ ","? ~ ")"
-  | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ","? ~ ")"
+    "(" ~ fn_rest? ~ ")"
+  | "(" ~ fn_arg ~ ("," ~ fn_rest?)? ~ ")"
+  | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ("," ~ fn_rest?)? ~ ")"
 }
 fn_return = _{ "->" ~ target }
 
-fn = { keyword_fn ~ name ~ fn_args ~ fn_return? ~ block }
+fn_body = _{ block | semi }
+fn      =  { keyword_fn ~ name ~ fn_args ~ fn_return? ~ fn_body }
 
 main = _{ SOI ~ fn* ~ EOI }
 
