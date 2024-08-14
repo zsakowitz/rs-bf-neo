@@ -266,7 +266,11 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
 
     /// Expects a `Rule::stmt_list_...` to be passed.
     fn parse_script(names: &mut NameManager, pair: Pair<Rule>) -> Script {
-        vec![]
+        match pair.as_rule() {
+            Rule::stmt_list_semi => pair.into_inner().map(|x| parse_stmt(names, x)).collect(),
+            Rule::stmt_list_no_semi => pair.into_inner().map(|x| parse_stmt(names, x)).collect(),
+            _ => unreachable!(),
+        }    
     }
 }
 

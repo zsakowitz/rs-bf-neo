@@ -17,7 +17,8 @@ reserved = @{
   | "exit"
 }
 
-name = @{ !reserved ~ (ID_START ~ ID_CONTINUE*) }
+name_single = @{ !(reserved ~ ID_CONTINUE) ~ (ID_START ~ ID_CONTINUE*) }
+name =        @{ name_single ~ ("::" ~ name_single)* }
 
 escape_seq = @{ "\\" ~ ("\\" | "\"" | "n" | "r") }
 char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
@@ -54,8 +55,8 @@ let_element       =  { name | "_" }
 let_array_size = _{ "[" ~ int? ~ "]" }
 let_init       = _{ "=" ~ target }
 
-stmt_needs_semi        = { stmt_break | stmt_call | stmt_let }
-stmt_no_mandatory_semi = { stmt_while | stmt_each | stmt_breakable }
+stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }
+stmt_no_mandatory_semi = _{ stmt_while | stmt_each | stmt_breakable }
 
 stmt_list_semi    = {
     ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))*
