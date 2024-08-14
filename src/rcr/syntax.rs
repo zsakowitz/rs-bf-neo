@@ -274,6 +274,24 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
             _ => unreachable!(),
         }    
     }
+
+    /// Expects a `Rule::fn` to be passed.
+    fn parse_fn(names: &mut NameManager, pair: Pair<Rule>) -> FnDeclaration {
+        let mut inner = pair.into_inner();
+        inner.next().unwrap(); // fn keyword
+        let name = names.get(inner.next().unwrap().as_str());
+        let fn_args = inner.next().unwrap().into_inner();
+        let fn_return = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
+        let block = inner.next();
+        
+        let args = Vec::new();
+        let rest = None::<u32>;
+        for arg in fn_args {
+            match arg.as_rule() {
+                Rule::fn_arg => 
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -67,17 +67,17 @@ stmt_list_no_semi = {
 
 block = _{ "{" ~ stmt_list_semi ~ "}" }
 
-fn_arg    =  { keyword_mut? ~ name ~ ("=" ~ target)? }
-fn_rest   =  { "..." ~ keyword_mut? ~ name }
-fn_args   = _{
+fn_arg    = { keyword_mut? ~ name ~ ("=" ~ target)? }
+fn_rest   = { "..." ~ keyword_mut? ~ name }
+fn_args   = {
     "(" ~ fn_rest? ~ ")"
   | "(" ~ fn_arg ~ ("," ~ fn_rest?)? ~ ")"
   | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ("," ~ fn_rest?)? ~ ")"
 }
-fn_return = _{ "->" ~ target }
+fn_return = { ("->" ~ target)? }
 
 fn_body = _{ block | semi }
-fn      =  { keyword_fn ~ name ~ fn_args ~ fn_return? ~ fn_body }
+fn      = { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
 
 main = _{ SOI ~ fn* ~ EOI }
 
