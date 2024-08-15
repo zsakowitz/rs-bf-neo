@@ -1,6 +1,0 @@
-0 add(mut a, b) {
-  while a {
-    dec a;
-    inc b;
-  }
-}

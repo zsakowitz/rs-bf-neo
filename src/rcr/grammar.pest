@@ -1,13 +1,18 @@
 semi = _{ ";" }
 
-int = @{ ('0'..'9')+ ~ !ID_CONTINUE }
+uint = @{ ('0'..'9')+ ~ !ID_CONTINUE }
+int  = @{ ("+" | "-")? ~ uint }
 
-reserved = @{
+builtin = @{
     "inc"
   | "dec"
   | "read"
   | "write"
   | "goto"
+}
+
+reserved = @{
+    builtin
   | "fn"
   | "mut"
   | "each"
@@ -17,11 +22,13 @@ reserved = @{
   | "exit"
 }
 
-name_single = @{ !(reserved ~ (ID_CONTINUE | "::")) ~ (ID_START ~ ID_CONTINUE*) }
+name_single = @{ !(reserved ~ (!ID_CONTINUE | "::")) ~ (ID_START ~ ID_CONTINUE*) }
 name        = @{ name_single ~ ("::" ~ name_single)* }
 
 escape_seq = @{ "\\" ~ ("\\" | "\"" | "n" | "r") }
 char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
+
+offset = @{ ("<" | ">") ~ uint }
 
 target_name    =  { name }
 target_array   =  { "[" ~ (target*) ~ "]" }
@@ -35,7 +42,8 @@ target_inner   =  {
   | target_lit_str
   | target_expr
 }
-target         =  { target_inner ~ ("." ~ int)? }
+target_current = @{ "@" ~ offset? }
+target         =  { target_inner ~ ("." ~ uint)? }
 
 arg = _{ target | keyword_underscore }
 
@@ -54,7 +62,7 @@ let_bind_standard =  { name ~ let_array_size? }
 let_bind_dest     =  { "[" ~ let_element* ~ "]" }
 let_element       =  { name | "_" }
 
-let_array_size =  { "[" ~ int? ~ "]" }
+let_array_size =  { "[" ~ uint? ~ "]" }
 let_init       = _{ "=" ~ target }
 
 stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }

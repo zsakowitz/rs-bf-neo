@@ -13,7 +13,7 @@ pub enum TargetInner {
     /// references a block of targets
     Array(Vec<Target>),
     /// creates a new local with the given value
-    Int(u32),
+    Int(i32),
     /// creates a new local with the given value
     Char(char),
     /// creates a new local with the given value
@@ -57,6 +57,11 @@ pub enum LetBinding {
     },
 }
 
+pub struct FnName {
+    UserDefined(u32),
+    Builtin(BuiltinName),
+}
+
 #[derive(Clone, Debug, Hash)]
 pub enum Statement {
     /// declares a variable
@@ -81,13 +86,8 @@ pub enum Statement {
     Break,
     /// calls a function
     Call {
-        name: u32,
-        /// any None value is filled with the default value
-        args: Vec<Option<Target>>
-    },
-    /// calls a builtin function
-    CallBuiltin {
-        name: BuiltinName,
+        name: FnName,
+        unsafe_mut: bool,
         args: Vec<Option<Target>>,
     },
 }
