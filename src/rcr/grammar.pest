@@ -52,7 +52,7 @@ let_bind_standard =  { name ~ let_array_size? }
 let_bind_dest     =  { "[" ~ let_element* ~ "]" }
 let_element       =  { name | "_" }
 
-let_array_size = _{ "[" ~ int? ~ "]" }
+let_array_size =  { "[" ~ int? ~ "]" }
 let_init       = _{ "=" ~ target }
 
 stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }
@@ -67,9 +67,11 @@ stmt_list_no_semi = {
 
 block = _{ "{" ~ stmt_list_semi ~ "}" }
 
-fn_arg    = { keyword_mut? ~ name ~ ("=" ~ target)? }
-fn_rest   = { "..." ~ keyword_mut? ~ name }
-fn_args   = {
+fn_arg_size = { let_array_size? }
+fn_arg_mut  = { keyword_mut? }
+fn_arg      = { fn_arg_mut ~ name ~ fn_arg_size ~ ("=" ~ target)? }
+fn_rest     = { "..." ~ keyword_mut? ~ name }
+fn_args     = {
     "(" ~ fn_rest? ~ ")"
   | "(" ~ fn_arg ~ ("," ~ fn_rest?)? ~ ")"
   | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ("," ~ fn_rest?)? ~ ")"

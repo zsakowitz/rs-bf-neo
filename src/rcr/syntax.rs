@@ -40,14 +40,16 @@ pub enum BuiltinName {
     Goto,
 }
 
+/// if None, it is not an array
+/// if Some(None), an auto-sized array
+/// if Some(Some(size)), an array of size `size`
+pub type ArraySize = Option<Option<usize>>;
+
 #[derive(Clone, Debug, Hash)]
 pub enum LetBinding {
     Standard {
         name: u32,
-        /// if None, it is not an array
-        /// if Some(None), an auto-sized array
-        /// if Some(Some(size)), an array of size `size`
-        size: Option<Option<usize>>,
+        size: ArraySize,
     },
     Destructured {
         /// a None in this Vec means the element is ignored
@@ -90,6 +92,7 @@ pub enum Statement {
 pub struct FnParam {
     mutable: bool,
     name: u32,
+    size: ArraySize,
     default: Option<Target>,
 }
 
@@ -97,7 +100,7 @@ pub struct FnParam {
 pub struct FnDeclaration {
     name: u32,
     args: Vec<FnParam>,
-    /// an optional rest parameter
+    /// an optional rest parameter (this is typed as an auto-sized block)
     rest: Option<u32>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
@@ -288,7 +291,20 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
         let rest = None::<u32>;
         for arg in fn_args {
             match arg.as_rule() {
-                Rule::fn_arg => 
+                Rule::fn_arg => {
+                    let mut inner = arg.into_inner();
+                    let mutable = inner.next().unwrap().into_inner().next().is_some();
+                    let name = names.get(inner.next().unwrap().as_str());
+                    let size = inner.next().unwrap().into_inner().next().map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap()));
+                    let default = inner.next().map(|x| parse_target(names, x));
+
+                    args.push(FnParam {
+                        mutable,
+                        name,
+                        size,
+                        default,
+                    });
+                }
             }
         }
     }
