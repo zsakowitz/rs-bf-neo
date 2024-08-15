@@ -80,11 +80,15 @@ pub enum Statement {
     /// only valid in an `Exitable` block
     Break,
     /// calls a function
-    Call { name: u32, args: Vec<Target> },
+    Call {
+        name: u32,
+        /// any None value is filled with the default value
+        args: Vec<Option<Target>>
+    },
     /// calls a builtin function
     CallBuiltin {
         name: BuiltinName,
-        args: Vec<Target>,
+        args: Vec<Option<Target>>,
     },
 }
 
@@ -97,11 +101,16 @@ pub struct FnParam {
 }
 
 #[derive(Clone, Debug, Hash)]
+pub struct FnRestParam {
+    mutable: bool,
+    name: u32,
+}
+
+#[derive(Clone, Debug, Hash)]
 pub struct FnDeclaration {
     name: u32,
     args: Vec<FnParam>,
-    /// an optional rest parameter (this is typed as an auto-sized block)
-    rest: Option<u32>,
+    rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
     returns: Option<Target>,
@@ -199,7 +208,11 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
             Rule::stmt_call => {
                 let mut inner = pair.into_inner();
                 let fn_name = inner.next().unwrap().as_str();
-                let args = inner.map(|x| parse_target(names, x)).collect();
+                let args = inner.map(|x| match x.as_rule() {
+                    Rule::target => Some(parse_target(names, x)),
+                    Rule::keyword_underscore => None,
+                    _ => unreachable!(),
+                }).collect();
                 Statement::CallBuiltin {
                     name: match fn_name {
                         "inc" => BuiltinName::Inc,
@@ -288,7 +301,7 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
         let block = inner.next();
         
         let args = Vec::new();
-        let rest = None::<u32>;
+        let rest = None;
         for arg in fn_args {
             match arg.as_rule() {
                 Rule::fn_arg => {
@@ -304,6 +317,17 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
                         size,
                         default,
                     });
+                }
+                Rule::fn_rest => {
+                    let mut inner = arg.into_inner();
+                    let mutable = inner.next().unwrap().into_inner().next().is_some();
+                    let name = names.get(inner.next().unwrap().as_str());
+                    
+                    rest = Some(FnRestParam {
+                        
+                    });
+
+                    break;
                 }
             }
         }

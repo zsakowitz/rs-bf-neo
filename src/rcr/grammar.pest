@@ -37,6 +37,8 @@ target_inner   =  {
 }
 target         =  { target_inner ~ ("." ~ int)? }
 
+arg = _{ target | keyword_underscore }
+
 fn_name_inner = @{ name | "inc" | "dec" | "read" | "write" | "goto" }
 fn_name       = ${ fn_name_inner ~ !ID_CONTINUE }
 
@@ -44,7 +46,7 @@ stmt_while     = { keyword_while ~ target ~ block }
 stmt_each      = { keyword_each ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
-stmt_call      = { fn_name ~ target* }
+stmt_call      = { fn_name ~ arg* }
 stmt_let       = { keyword_let ~ let_bindable ~ let_init? }
 
 let_bindable      = _{ let_bind_dest | let_bind_standard }
@@ -70,7 +72,7 @@ block = _{ "{" ~ stmt_list_semi ~ "}" }
 fn_arg_size = { let_array_size? }
 fn_arg_mut  = { keyword_mut? }
 fn_arg      = { fn_arg_mut ~ name ~ fn_arg_size ~ ("=" ~ target)? }
-fn_rest     = { "..." ~ keyword_mut? ~ name }
+fn_rest     = { "..." ~ fn_arg_mut ~ name }
 fn_args     = {
     "(" ~ fn_rest? ~ ")"
   | "(" ~ fn_arg ~ ("," ~ fn_rest?)? ~ ")"
@@ -83,14 +85,15 @@ fn      = { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
 
 main = _{ SOI ~ fn* ~ EOI }
 
-keyword_mut       = @{ "mut" ~ !ID_CONTINUE }
-keyword_let       = @{ "let" ~ !ID_CONTINUE }
-keyword_fn        = @{ "fn" ~ !ID_CONTINUE }
-keyword_while     = @{ "while" ~ !ID_CONTINUE }
-keyword_each      = @{ "each" ~ !ID_CONTINUE }
-keyword_breakable = @{ "breakable" ~ !ID_CONTINUE }
-keyword_break     = @{ "break" ~ !ID_CONTINUE }
-keyword_in        = @{ "in" ~ !ID_CONTINUE }
+keyword_mut        = @{ "mut" ~ !ID_CONTINUE }
+keyword_let        = @{ "let" ~ !ID_CONTINUE }
+keyword_fn         = @{ "fn" ~ !ID_CONTINUE }
+keyword_while      = @{ "while" ~ !ID_CONTINUE }
+keyword_each       = @{ "each" ~ !ID_CONTINUE }
+keyword_breakable  = @{ "breakable" ~ !ID_CONTINUE }
+keyword_break      = @{ "break" ~ !ID_CONTINUE }
+keyword_in         = @{ "in" ~ !ID_CONTINUE }
+keyword_underscore = @{ "_" ~ !ID_CONTINUE }
 
 WHITESPACE = _{ " " | "\t" | NEWLINE }
 
