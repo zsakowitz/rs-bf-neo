@@ -144,14 +144,11 @@ impl NameManager {
     }
 }
 
-fn parse(input: &str) -> Result<(), Error<Rule>> {
-    let mut pairs = MyParser::parse(Rule::stmt_let, input)?;
+fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
+    let mut pairs = MyParser::parse(Rule::main, input)?;
     let mut names = NameManager::new();
 
-    let first = pairs.next().unwrap();
-    dbg!(parse_stmt(&mut names, first));
-
-    return Ok(());
+    return Ok(pairs.map(|x| parse_fn(&mut names, x)).collect());
 
     /// Expects a `Rule::target` to be passed.
     fn parse_target(names: &mut NameManager, pair: Pair<Rule>) -> Target {
@@ -297,8 +294,8 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
         inner.next().unwrap(); // fn keyword
         let name = names.get(inner.next().unwrap().as_str());
         let fn_args = inner.next().unwrap().into_inner();
-        let fn_return = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
-        let block = inner.next();
+        let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
+        let body = inner.next().map(|x| parse_script(names, x)).or(Vec::new());
         
         let args = Vec::new();
         let rest = None;
@@ -324,12 +321,22 @@ fn parse(input: &str) -> Result<(), Error<Rule>> {
                     let name = names.get(inner.next().unwrap().as_str());
                     
                     rest = Some(FnRestParam {
-                        
+                        name,
+                        mutable,
                     });
 
                     break;
                 }
+                _ => unreachable!(),
             }
+        }
+
+        FnDeclaration {
+            name,
+            args,
+            rest,
+            returns,
+            body,
         }
     }
 }
