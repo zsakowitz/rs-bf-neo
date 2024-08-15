@@ -30,31 +30,34 @@ char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
 
 offset = @{ ("<" | ">") ~ uint }
 
-target_name    =  { name }
-target_array   =  { "[" ~ (target*) ~ "]" }
-target_lit_int =  { int }
-target_lit_str = @{ "\"" ~ char_dq* ~ "\"" }
-target_expr    =  { "(" ~ stmt_list_no_semi ~ ")" }
-target_inner   =  {
+target_name     =  { name }
+target_array    =  { "[" ~ (target*) ~ "]" }
+target_lit_int  =  { int }
+target_lit_str  = @{ "\"" ~ char_dq* ~ "\"" }
+target_expr     =  { "(" ~ stmt_list_no_semi ~ ")" }
+target_relative = @{ "@" ~ offset? }
+target_inner    =  {
     target_name
   | target_array
   | target_lit_int
   | target_lit_str
   | target_expr
+  | target_relative
 }
-target_current = @{ "@" ~ offset? }
-target         =  { target_inner ~ ("." ~ uint)? }
+target          =  { target_inner ~ ("." ~ uint)? }
 
 arg = _{ target | keyword_underscore }
 
 fn_name_inner = @{ name | "inc" | "dec" | "read" | "write" | "goto" }
 fn_name       = ${ fn_name_inner ~ !ID_CONTINUE }
 
+call_unsafe = { keyword_unsafe? }
+
 stmt_while     = { keyword_while ~ target ~ block }
 stmt_each      = { keyword_each ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
-stmt_call      = { fn_name ~ arg* }
+stmt_call      = { call_unsafe ~ fn_name ~ arg* }
 stmt_let       = { keyword_let ~ let_bindable ~ let_init? }
 
 let_bindable      = _{ let_bind_dest | let_bind_standard }
@@ -101,6 +104,7 @@ keyword_each       = @{ "each" ~ !ID_CONTINUE }
 keyword_breakable  = @{ "breakable" ~ !ID_CONTINUE }
 keyword_break      = @{ "break" ~ !ID_CONTINUE }
 keyword_in         = @{ "in" ~ !ID_CONTINUE }
+keyword_unsafe     = @{ "unsafe" ~ !ID_CONTINUE }
 keyword_underscore = @{ "_" ~ !ID_CONTINUE }
 
 WHITESPACE = _{ " " | "\t" | NEWLINE }

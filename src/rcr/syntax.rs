@@ -18,6 +18,8 @@ pub enum TargetInner {
     Char(char),
     /// creates a new local with the given value
     Str(String),
+    /// references a cell relative to the one currently pointed at
+    Relative(isize),
     /// returns the value of the last statement
     Expr { expr: Box<Script> },
 }
@@ -87,7 +89,7 @@ pub enum Statement {
     /// calls a function
     Call {
         name: FnName,
-        unsafe_mut: bool,
+        is_unsafe: bool,
         args: Vec<Option<Target>>,
     },
 }
@@ -167,6 +169,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
                 }
                 Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
+                Rule::target_relative => TargetInner::Relative(pair.as_str().parse().unwrap()),
                 Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
                 Rule::target_lit_str => TargetInner::Str(
                     pair.into_inner()
@@ -204,26 +207,23 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
             }
             Rule::stmt_call => {
                 let mut inner = pair.into_inner();
+                let is_unsafe = inner.next().unwrap().into_inner().next().is_some();
                 let fn_name = inner.next().unwrap().as_str();
                 let args = inner.map(|x| match x.as_rule() {
                     Rule::target => Some(parse_target(names, x)),
                     Rule::keyword_underscore => None,
                     _ => unreachable!(),
                 }).collect();
-                Statement::CallBuiltin {
+                Statement::Call {
                     name: match fn_name {
-                        "inc" => BuiltinName::Inc,
-                        "dec" => BuiltinName::Dec,
-                        "read" => BuiltinName::Read,
-                        "write" => BuiltinName::Write,
-                        "goto" => BuiltinName::Goto,
-                        name => {
-                            return Statement::Call {
-                                name: names.get(name),
-                                args,
-                            }
-                        }
+                        "inc" => FnName::Builtin(BuiltinName::Inc),
+                        "dec" => FnName::Builtin(BuiltinName::Dec),
+                        "read" => FnName::Builtin(BuiltinName::Read),
+                        "write" => FnName::Builtin(BuiltinName::Write),
+                        "goto" => FnName::Builtin(BuiltinName::Goto),
+                        name => FnName::UserDefined(names.get(fn_name)),
                     },
+                    is_unsafe,
                     args,
                 }
             }
