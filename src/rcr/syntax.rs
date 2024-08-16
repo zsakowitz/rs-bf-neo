@@ -2,6 +2,9 @@ use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::collections::HashMap;
 
+#[derive(Clone, Debug, Hash)]
+pub struct Name(u32);
+
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
@@ -9,7 +12,7 @@ use std::collections::HashMap;
 #[non_exhaustive]
 pub enum TargetInner {
     /// references a local
-    Local(u32),
+    Local(Name),
     /// references a block of targets
     Array(Vec<Target>),
     /// creates a new local with the given value
@@ -33,7 +36,7 @@ pub struct Target {
 
 pub type Script = Vec<Statement>;
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Hash)]
 #[non_exhaustive]
 pub enum BuiltinName {
     Inc,
@@ -45,6 +48,22 @@ pub enum BuiltinName {
     AssertIsUnknown,
 }
 
+impl Debug for BuiltinName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
+        f.write_str("\"")?;
+        f.write_str(match *self {
+            Self::Inc => "inc",
+            Self::Dec => "dec",
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Goto => "goto",
+            Self::AssertIsZero => "assert::is_zero",
+            Self::AssertIsUnknown => "assert::is_unknown",
+        });
+        f.write_str("\"")
+    }
+}
+
 /// if None, it is not an array
 /// if Some(None), an auto-sized array
 /// if Some(Some(size)), an array of size `size`
@@ -54,19 +73,19 @@ pub type ArraySize = Option<Option<usize>>;
 #[non_exhaustive]
 pub enum LetBinding {
     Standard {
-        name: u32,
+        name: Name,
         size: ArraySize,
     },
     Destructured {
         /// a None in this Vec means the element is ignored
-        els: Vec<Option<u32>>,
+        els: Vec<Option<Name>>,
     },
 }
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Hash)]
 #[non_exhaustive]
 pub enum FnName {
-    UserDefined(u32),
+    UserDefined(Name),
     Builtin(BuiltinName),
 }
 
@@ -81,7 +100,7 @@ pub enum Statement {
     },
     /// runs the given code for each target of an array
     For {
-        bound: u32,
+        bound: Name,
         array: Target,
         body: Script,
     },
@@ -107,7 +126,7 @@ pub enum Statement {
 #[non_exhaustive]
 pub struct FnParam {
     mutable: bool,
-    name: u32,
+    name: Name,
     size: ArraySize,
     default: Option<Target>,
 }
@@ -116,13 +135,13 @@ pub struct FnParam {
 #[non_exhaustive]
 pub struct FnRestParam {
     mutable: bool,
-    name: u32,
+    name: Name,
 }
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub struct FnDeclaration {
-    name: u32,
+    name: Name,
     args: Vec<FnParam>,
     rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
@@ -136,7 +155,7 @@ pub struct FnDeclaration {
 struct MyParser;
 
 struct NameManager {
-    data: HashMap<String, u32>,
+    data: HashMap<String, Name>,
     next: u32,
 }
 
@@ -148,7 +167,7 @@ impl NameManager {
         }
     }
 
-    fn get(&mut self, name: &str) -> u32 {
+    fn get(&mut self, name: &str) -> Name {
         if let Some(x) = self.data.get(name) {
             return *x;
         }
@@ -180,7 +199,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 Rule::target_array => {
                     TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
                 }
-                Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
+                Rule::target_name => TargetInner::Local(Name(names.get(pair.as_str()))),
                 Rule::target_relative => TargetInner::Relative(pair.as_str().parse().unwrap()),
                 Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
                 Rule::target_lit_str => TargetInner::Str(
@@ -359,3 +378,5 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         }
     }
 }
+
+
