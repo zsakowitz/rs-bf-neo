@@ -32,11 +32,14 @@ char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
 
 offset = @{ ("<" | ">") ~ uint? }
 
+target_expr_one   = { "(" ~ stmt_any ~ ")" }
+target_expr_block = { block_no_semi }
+
 target_name     =  { name }
 target_array    =  { "[" ~ (target*) ~ "]" }
 target_lit_int  =  { int }
 target_lit_str  = @{ "\"" ~ char_dq* ~ "\"" }
-target_expr     =  { "(" ~ stmt_list_no_semi ~ ")" }
+target_expr     =  { target_expr_one | target_expr_block }
 target_relative = @{ "@" ~ offset? }
 target_inner    =  {
     target_name
@@ -81,15 +84,18 @@ let_init       = _{ "=" ~ target }
 
 stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }
 stmt_no_mandatory_semi = _{ stmt_while | stmt_for | stmt_breakable }
+stmt_any               = _{ stmt_needs_semi | stmt_no_mandatory_semi }
+stmt_with_proper_semi  = _{ fn | (stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?) }
 
 stmt_list_semi    = {
-    ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))*
+    stmt_with_proper_semi*
 }
 stmt_list_no_semi = {
-    ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))* ~ (stmt_needs_semi | stmt_no_mandatory_semi)
+    stmt_with_proper_semi* ~ (stmt_needs_semi | stmt_no_mandatory_semi)
 }
 
-block = _{ "{" ~ stmt_list_semi ~ "}" }
+block         = _{ "{" ~ stmt_list_semi ~ "}" }
+block_no_semi = _{ "{" ~ stmt_list_no_semi ~ "}" }
 
 fn_arg_mut     = { keyword_mut? }
 fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }

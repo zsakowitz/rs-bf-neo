@@ -81,7 +81,12 @@ pub struct Target {
     index: Option<u32>,
 }
 
-pub type Script = Vec<Statement>;
+#[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
+pub struct Script {
+    stmts: Vec<Statement>,
+    fns: Vec<FnDeclaration>,
+}
 
 #[derive(Copy, Clone, Hash)]
 #[non_exhaustive]
@@ -278,9 +283,17 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         })
                         .collect(),
                 ),
-                Rule::target_expr => TargetInner::Expr(
-                    Box::new(parse_script(names, pair.into_inner().next().unwrap())),
-                ),
+                Rule::target_expr => TargetInner::Expr({
+                    let inner = pair.into_inner().next().unwrap();
+                    match inner.as_rule() {
+                        Rule::target_expr_one => Script {
+                            stmts: vec![parse_stmt(names, inner.into_inner().next().unwrap())],
+                            fns: Vec::new(),
+                        },
+                        Rule::target_expr_block => parse_script(names, inner.into_inner().next().unwrap()),
+                        _ => unreachable!(),
+                    }
+                }),
                 rule => unreachable!("{rule:?} is not a target"),
             }
         }
@@ -367,11 +380,18 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     /// Expects a `Rule::stmt_list_...` to be passed.
     fn parse_script(names: &mut NameManager, pair: Pair<Rule>) -> Script {
-        match pair.as_rule() {
-            Rule::stmt_list_semi => pair.into_inner().map(|x| parse_stmt(names, x)).collect(),
-            Rule::stmt_list_no_semi => pair.into_inner().map(|x| parse_stmt(names, x)).collect(),
-            _ => unreachable!(),
-        }    
+        let fns = Vec::new();
+        let stmts = Vec::new();
+
+        for x in pair.into_inner() {
+            if x.as_rule() == Rule::r#fn {
+                fns.push(parse_fn(names, x));
+            } else {
+                stmts.push(parse_stmt(names, x));
+            }
+        }
+
+        Script { stmts, fns }
     }
 
     /// Expects a `Rule::let_dest` or `Rule::let_bind_standard` to be passed.
