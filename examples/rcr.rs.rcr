@@ -27,11 +27,19 @@ fn mult(a, mut b, mut c = 0) -> c {
     }
 }
 
-fn zero_all([a b c]) {
+fn zero_all(mut [a b c]) {
     for a in a {
+        zero a;
+    }
 
+    fn zero(mut a) {
+        while a {
+            dec a;
+        }
     }
 }
+
+fn twenty_three(mut [a=23]) -> a;
 
 fn main() {
     let result = (mult (add 3 4) (clone (add 5 7)));

@@ -166,6 +166,7 @@ pub enum Statement {
     },
     /// runs the given code for each target of an array
     For {
+        mutable: bool,
         bound: Name,
         array: Target,
         body: Script,
@@ -341,11 +342,13 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
             Rule::stmt_for => {
                 let mut inner = pair.into_inner();
                 inner.next().unwrap();
+                let mutable = inner.next().unwrap().into_inner().next().is_some();
                 let name = inner.next().unwrap();
                 inner.next().unwrap();
                 let target = inner.next().unwrap();
                 let block = inner.next().unwrap();
                 Statement::For {
+                    mutable,
                     bound: names.get(name.as_str()),
                     array: parse_target(names, target),
                     body: parse_script(names, block),
