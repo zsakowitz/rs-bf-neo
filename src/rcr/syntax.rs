@@ -118,8 +118,7 @@ pub type ArraySize = Option<Option<usize>>;
 #[non_exhaustive]
 pub enum LetBindingInDestructure {
     Ignored,
-    Named(Name),
-    Optional { name: Name, default: Target },
+    Named { name: Name, default: Option<Target> },
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -188,8 +187,7 @@ pub enum Statement {
 #[non_exhaustive]
 pub struct FnParam {
     mutable: bool,
-    name: Name,
-    size: ArraySize,
+    binding: LetBinding,
     default: Option<Target>,
 }
 
@@ -204,7 +202,7 @@ pub struct FnRestParam {
 #[non_exhaustive]
 pub struct FnDeclaration {
     name: Name,
-    args: Vec<LetBinding>,
+    args: Vec<FnParam>,
     rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
@@ -363,22 +361,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let let_init = inner.next();
 
                 Statement::Let {
-                    binding: match let_bindable.as_rule() {
-                        Rule::let_bind_dest => todo!(),
-                        Rule::let_bind_standard => {
-                            let mut inner = let_bindable.into_inner();
-                            let name = inner.next().unwrap();
-                            let array_size = inner.next();
-                            LetBinding::Standard {
-                                name: names.get(name.as_str()),
-                                size: array_size.map(|x| {
-                                    x.into_inner().next().map(|y| y.as_str().parse().unwrap())
-                                }),
-                            }
-                        }
-                        _ => unreachable!(),
-                    },
                     mutable,
+                    binding: parse_let_bindable(names, let_bindable),x
                     value: let_init.map(|x| parse_target(names, x)),
                 }
             }
@@ -395,6 +379,38 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         }    
     }
 
+    /// Expects a `Rule::let_dest` or `Rule::let_bind_standard` to be passed.
+    fn parse_let_bindable(names: &mut NameManager, pair: Pair<Rule>) -> LetBinding {
+        match pair.as_rule() {
+            Rule::let_bind_standard => {
+                let mut inner = pair.into_inner();
+                LetBinding::Standard {
+                    name: names.get(inner.next().unwrap().as_str()),
+                    size: inner.next().map(|x| x.into_inner().next().map(|x| x.parse().unwrap())),
+                }
+            }
+            Rule::let_dest => {
+                let mut inner = pair.into_inner();
+                let els = inner.next().unwrap().into_inner();
+                let accept_inexact = inner.next().is_some();
+                LetBinding::Destructured {
+                    els: els.map(|x| match x.into_inner().next() {
+                        Some(x) => {
+                            let mut inner = x.into_inner();
+                            LetBindingInDestructure::Named {
+                                name: names.get(inner.next().unwrap().get()),
+                                default: inner.next().map(|x| parse_target(names, x)),
+                            }
+                        },
+                        None => LetBindingInDestructure::Ignored,
+                    }),
+                    accept_inexact,
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
     /// Expects a `Rule::fn` to be passed.
     fn parse_fn(names: &mut NameManager, pair: Pair<Rule>) -> FnDeclaration {
         assert_eq!(pair.as_rule(), Rule::r#fn);
@@ -402,49 +418,33 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         let mut inner = pair.into_inner();
         inner.next().unwrap(); // fn keyword
         let name = names.get(inner.next().unwrap().as_str());
-        let fn_args = inner.next().unwrap().into_inner();
+        let mut fn_args = inner.next().unwrap().into_inner();
+        let (args, rest) = match (fn_args.next(), fn_args.next()) {
+            (None, _) => (std::iter::empty(), None),
+            (Some(a), None) if a.as_rule() == Rule::fn_rest => (std::iter::empty(), Some(a)),
+            (Some(a), None) => (a.into_inner(), None),
+            (Some(a), Some(b)) => (a.into_inner(), Some(b)),
+        };
         let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
         let body = inner.next().map(|x| parse_script(names, x)).unwrap_or(Vec::new());
-        
-        let mut args = Vec::new();
-        let rest = 'a: {
-            for arg in fn_args {
-                match arg.as_rule() {
-                    Rule::fn_arg => {
-                        let mut inner = arg.into_inner();
-                        let mutable = inner.next().unwrap().into_inner().next().is_some();
-                        let name = names.get(inner.next().unwrap().as_str());
-                        let size = inner.next().unwrap().into_inner().next().map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap()));
-                        let default = inner.next().map(|x| parse_target(names, x));
-
-                        args.push(FnParam {
-                            mutable,
-                            name,
-                            size,
-                            default,
-                        });
-                    }
-                    Rule::fn_rest => {
-                        let mut inner = arg.into_inner();
-                        let mutable = inner.next().unwrap().into_inner().next().is_some();
-                        let name = names.get(inner.next().unwrap().as_str());
-                        
-                        break 'a Some(FnRestParam {
-                            name,
-                            mutable,
-                        });
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            None
-        };
 
         FnDeclaration {
             name,
-            args,
-            rest,
+            args: args.map(|x| {
+                let mut inner = x.into_inner();
+                FnParam {
+                    mutable: inner.next().unwrap().into_inner().next().is_some(),
+                    binding: parse_let_bindable(names, inner.next().unwrap()),
+                    default: inner.next().map(|x| parse_target(names, x)),
+                }
+            ).collect(),
+            rest: rest.map(|x| {
+                let mut inner = x.into_inner();
+                FnRestParam {
+                    mutable: inner.next().unwrap().into_inner().next().is_some(),
+                    name: names.get(inner.next().unwrap().as_str()),
+                }
+            }),
             returns,
             body,
         }

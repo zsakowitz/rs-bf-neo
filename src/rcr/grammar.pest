@@ -91,12 +91,13 @@ stmt_list_no_semi = {
 
 block = _{ "{" ~ stmt_list_semi ~ "}" }
 
-fn_arg      = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
-fn_rest     = { "..." ~ fn_arg_mut ~ name }
+fn_arg_mut     = { keyword_mut? }
+fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
+fn_normal_args = { fn_arg ~ ("," ~ fn_arg)* }
+fn_rest        = { "..." ~ fn_arg_mut ~ name }
 fn_args     = {
     "(" ~ fn_rest? ~ ")"
-  | "(" ~ fn_arg ~ ("," ~ fn_rest?)? ~ ")"
-  | "(" ~ fn_arg ~ ("," ~ fn_arg)* ~ ("," ~ fn_rest?)? ~ ")"
+  | "(" ~ fn_normal_args ~ ("," ~ fn_rest?)? ~ ")"
 }
 fn_return = { ("->" ~ target)? }
 
