@@ -67,10 +67,14 @@ stmt_break     = { keyword_break }
 stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
 stmt_let       = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
 
-let_bindable      = _{ let_bind_dest | let_bind_standard }
+let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
-let_bind_dest     =  { "[" ~ let_element* ~ "]" }
-let_element       =  { name | "_" }
+
+let_dest_element       = { name ~ ("=" ~ target)? }
+let_dest_maybe_element = { let_dest_tru | "_" }
+let_dest_els           = { let_dest_el* }
+let_dest_dots          = { "..." }
+let_dest               = { "[" ~ let_dest_els ~ let_dest_dots? ~ "]" }
 
 let_array_size =  { "[" ~ uint? ~ "]" }
 let_init       = _{ "=" ~ target }
@@ -87,9 +91,7 @@ stmt_list_no_semi = {
 
 block = _{ "{" ~ stmt_list_semi ~ "}" }
 
-fn_arg_size = { let_array_size? }
-fn_arg_mut  = { keyword_mut? }
-fn_arg      = { fn_arg_mut ~ name ~ fn_arg_size ~ ("=" ~ target)? }
+fn_arg      = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
 fn_rest     = { "..." ~ fn_arg_mut ~ name }
 fn_args     = {
     "(" ~ fn_rest? ~ ")"

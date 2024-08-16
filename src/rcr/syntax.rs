@@ -116,14 +116,22 @@ pub type ArraySize = Option<Option<usize>>;
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
+pub enum LetBindingInDestructure {
+    Ignored,
+    Named(Name),
+    Optional { name: Name, default: Target },
+}
+
+#[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum LetBinding {
     Standard {
         name: Name,
         size: ArraySize,
     },
     Destructured {
-        /// a None in this Vec means the element is ignored
-        els: Vec<Option<Name>>,
+        els: Vec<LetBindingInDestructure>,
+        accept_inexact: bool,
     },
 }
 
@@ -196,7 +204,7 @@ pub struct FnRestParam {
 #[non_exhaustive]
 pub struct FnDeclaration {
     name: Name,
-    args: Vec<FnParam>,
+    args: Vec<LetBinding>,
     rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target

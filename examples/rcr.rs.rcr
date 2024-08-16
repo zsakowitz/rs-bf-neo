@@ -27,6 +27,12 @@ fn mult(a, mut b, mut c = 0) -> c {
     }
 }
 
+fn zero_all([a b c]) {
+    for a in a {
+
+    }
+}
+
 fn main() {
     let result = (mult (add 3 4) (clone (add 5 7)));
     let hello_world[] = "Hello, world!";
