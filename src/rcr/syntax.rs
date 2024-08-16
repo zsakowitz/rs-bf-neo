@@ -216,7 +216,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     Rule::keyword_underscore => None,
                     _ => unreachable!(),
                 }).collect();
-                let rest = inner.next().unwrap().into_inner().map(|x| parse_target(names, x));
+                let rest = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
                 Statement::Call {
                     name: match fn_name {
                         "inc" => FnName::Builtin(BuiltinName::Inc),
@@ -326,7 +326,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         let mutable = inner.next().unwrap().into_inner().next().is_some();
                         let name = names.get(inner.next().unwrap().as_str());
                         
-                        break Some(FnRestParam {
+                        break 'a Some(FnRestParam {
                             name,
                             mutable,
                         });
