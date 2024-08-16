@@ -1,6 +1,6 @@
 use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 #[derive(Copy, Clone, Debug, Hash)]
 pub struct Name(u32);
