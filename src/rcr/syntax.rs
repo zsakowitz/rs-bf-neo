@@ -6,6 +6,7 @@ use std::collections::HashMap;
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum TargetInner {
     /// references a local
     Local(u32),
@@ -33,12 +34,15 @@ pub struct Target {
 pub type Script = Vec<Statement>;
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum BuiltinName {
     Inc,
     Dec,
     Read,
     Write,
     Goto,
+    AssertIsZero,
+    AssertIsUnknown,
 }
 
 /// if None, it is not an array
@@ -47,6 +51,7 @@ pub enum BuiltinName {
 pub type ArraySize = Option<Option<usize>>;
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum LetBinding {
     Standard {
         name: u32,
@@ -59,12 +64,14 @@ pub enum LetBinding {
 }
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum FnName {
     UserDefined(u32),
     Builtin(BuiltinName),
 }
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub enum Statement {
     /// declares a variable
     Let {
@@ -97,6 +104,7 @@ pub enum Statement {
 }
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub struct FnParam {
     mutable: bool,
     name: u32,
@@ -105,12 +113,14 @@ pub struct FnParam {
 }
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub struct FnRestParam {
     mutable: bool,
     name: u32,
 }
 
 #[derive(Clone, Debug, Hash)]
+#[non_exhaustive]
 pub struct FnDeclaration {
     name: u32,
     args: Vec<FnParam>,

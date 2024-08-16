@@ -9,6 +9,8 @@ builtin = @{
   | "read"
   | "write"
   | "goto"
+  | "assert::is_zero"
+  | "assert::is_unknown"
 }
 
 reserved = @{
