@@ -1,7 +1,6 @@
-use std::{collections::HashMap, ops::BitAndAssign};
-
-use pest::{error::Error, iterators::Pair, pratt_parser::Op, Parser};
+use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
+use std::collections::HashMap;
 
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
@@ -148,7 +147,7 @@ impl NameManager {
 }
 
 fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
-    let mut pairs = MyParser::parse(Rule::main, input)?;
+    let pairs = MyParser::parse(Rule::main, input)?;
     let mut names = NameManager::new();
 
     return Ok(pairs.map(|x| parse_fn(&mut names, x)).collect());
@@ -222,7 +221,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         "read" => FnName::Builtin(BuiltinName::Read),
                         "write" => FnName::Builtin(BuiltinName::Write),
                         "goto" => FnName::Builtin(BuiltinName::Goto),
-                        name => FnName::UserDefined(names.get(fn_name)),
+                        _ => FnName::UserDefined(names.get(fn_name)),
                     },
                     is_unsafe,
                     args,
@@ -296,7 +295,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         let name = names.get(inner.next().unwrap().as_str());
         let fn_args = inner.next().unwrap().into_inner();
         let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
-        let body = inner.next().map(|x| parse_script(names, x)).or(Vec::new());
+        let body = inner.next().map(|x| parse_script(names, x)).unwrap_or(Vec::new());
         
         let args = Vec::new();
         let rest = None;
