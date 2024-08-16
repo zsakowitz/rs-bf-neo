@@ -49,3 +49,24 @@ fn main() {
         write el;
     }
 }
+
+fn is_nonzero(mut a, mut output = 0) -> output {
+    zero output;
+
+    while a {
+        zero a;
+        inc output;
+    }
+
+    fn zero(mut a) {
+        while a {
+            dec a;
+        }
+    }
+}
+
+fn breakable_loop() {
+    breakable {
+
+    }
+}

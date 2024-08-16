@@ -20,8 +20,15 @@ reserved = @{
   | "for"
   | "let"
   | "while"
-  | "exitable"
-  | "exit"
+  | "if"
+  | "else"
+  | "use"
+  | "pub"
+  | "static"
+  | "const"
+  | "return"
+  | "break"
+  | "continue"
 }
 
 name_single = @{ !(reserved ~ (!ID_CONTINUE | "::")) ~ (ID_START ~ ID_CONTINUE*) }
@@ -65,8 +72,6 @@ let_mut = { keyword_mut? }
 
 stmt_while     = { keyword_while ~ target ~ block }
 stmt_for       = { keyword_for ~ let_mut ~ name ~ keyword_in ~ target ~ block }
-stmt_breakable = { keyword_breakable ~ target? ~ block }
-stmt_break     = { keyword_break }
 stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
 stmt_let       = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
 
@@ -82,8 +87,8 @@ let_dest               = { "[" ~ let_dest_els ~ let_dest_dots? ~ "]" }
 let_array_size =  { "[" ~ uint? ~ "]" }
 let_init       = _{ "=" ~ target }
 
-stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }
-stmt_no_mandatory_semi = _{ stmt_while | stmt_for | stmt_breakable }
+stmt_needs_semi        = _{ stmt_call | stmt_let }
+stmt_no_mandatory_semi = _{ stmt_while | stmt_for }
 stmt_any               = _{ stmt_needs_semi | stmt_no_mandatory_semi }
 stmt_with_proper_semi  = _{ fn | (stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?) }
 
@@ -116,9 +121,7 @@ keyword_mut        = @{ "mut" ~ !ID_CONTINUE }
 keyword_let        = @{ "let" ~ !ID_CONTINUE }
 keyword_fn         = @{ "fn" ~ !ID_CONTINUE }
 keyword_while      = @{ "while" ~ !ID_CONTINUE }
-keyword_for       = @{ "for" ~ !ID_CONTINUE }
-keyword_breakable  = @{ "breakable" ~ !ID_CONTINUE }
-keyword_break      = @{ "break" ~ !ID_CONTINUE }
+keyword_for        = @{ "for" ~ !ID_CONTINUE }
 keyword_in         = @{ "in" ~ !ID_CONTINUE }
 keyword_unsafe     = @{ "unsafe" ~ !ID_CONTINUE }
 keyword_underscore = @{ "_" ~ !ID_CONTINUE }

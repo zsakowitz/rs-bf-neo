@@ -173,13 +173,6 @@ pub enum Statement {
     },
     /// runs the given code while `target` is nonzero
     While { target: Target, body: Script },
-    /// creates a block which can be exited from
-    Breakable {
-        target: Option<Target>,
-        body: Script,
-    },
-    /// only valid in an `Exitable` block
-    Break,
     /// calls a function
     Call {
         name: FnName,
@@ -303,18 +296,6 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
     /// Expects a `Rule::stmt_...` to be passed.
     fn parse_stmt(names: &mut NameManager, pair: Pair<Rule>) -> Statement {
         match pair.as_rule() {
-            Rule::stmt_break => Statement::Break,
-            Rule::stmt_breakable => {
-                let mut inner = pair.into_inner();
-                let (target, body) = match (inner.next().unwrap(), inner.next()) {
-                    (target, Some(body)) => (Some(target), body),
-                    (body, None) => (None, body),
-                };
-                Statement::Breakable {
-                    target: target.map(|pair| parse_target(names, pair)),
-                    body: parse_script(names, body),
-                }
-            }
             Rule::stmt_call => {
                 let mut inner = pair.into_inner();
                 let is_unsafe = inner.next().unwrap().into_inner().next().is_some();
