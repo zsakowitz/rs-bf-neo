@@ -19,7 +19,7 @@ impl fmt::Debug for Offset {
         match self.0 {
             0 => write!(f, "@"),
             0.. => write!(f, "@>{}", self.0),
-            ..=0 => write!(f, "@<{}", -self.0),
+            ..0 => write!(f, "@<{}", -self.0),
         }
     }
 }
@@ -51,7 +51,7 @@ impl TargetInner {
         match self {
             Self::Local(_) | Self::Int(_) | Self::Char(_) | Self::Str(_) | Self::Relative(_) => false,
             Self::Expr(_) => true,
-            Self::Array(x) => x.iter().any(|x| x.target.is_multiline()),
+            Self::Array(x) => x.iter().any(|x| x.inner.is_multiline()),
         }
     }
 }
@@ -65,7 +65,7 @@ impl fmt::Debug for TargetInner {
             Self::Str(x) => x.fmt(f),
             Self::Relative(x) => x.fmt(f),
             Self::Expr(x) => f.debug_tuple("Expr").field(x).finish(),
-            Self::Array(x) => if x.iter().any(|x| x.is_multiline()) {
+            Self::Array(x) => if x.iter().any(|x| x.inner.is_multiline()) {
                 f.debug_list().entries(x).finish()
             } else {
                 write!(f, "{:?}", x)
@@ -244,7 +244,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
     return Ok(pair.filter(|x| x.as_rule() == Rule::r#fn).map(|x| parse_fn(&mut names, x)).collect());
 
     fn parse_offset(mut s: &str) -> Offset {
-        let direction = if s.starts_with("@>") { 1 } else { -1 };
+        let direction: isize = if s.starts_with("@>") { 1 } else { -1 };
         Offset(direction * (&s[2..]).parse().unwrap())
     }
 
@@ -393,12 +393,12 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         Some(x) => {
                             let mut inner = x.into_inner();
                             LetBindingInDestructure::Named {
-                                name: names.get(inner.next().unwrap().get()),
+                                name: names.get(inner.next().unwrap().as_str()),
                                 default: inner.next().map(|x| parse_target(names, x)),
                             }
                         },
                         None => LetBindingInDestructure::Ignored,
-                    }),
+                    }).collect(),
                     accept_inexact,
                 }
             }
