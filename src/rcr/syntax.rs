@@ -18,8 +18,8 @@ impl fmt::Debug for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             0 => write!(f, "@"),
-            0.. => write!(f, "@>{}", x),
-            ..=0 => write!(f, "@<{}", -x),
+            0.. => write!(f, "@>{}", self.0),
+            ..=0 => write!(f, "@<{}", -self.0),
         }
     }
 }
@@ -43,7 +43,7 @@ pub enum TargetInner {
     /// references a block of targets
     Array(Vec<Target>),
     /// returns the value of the last statement
-    Expr { expr: Box<Script> },
+    Expr(Box<Script>),
 }
 
 impl TargetInner {
@@ -51,7 +51,7 @@ impl TargetInner {
         match self {
             Self::Local(_) | Self::Int(_) | Self::Char(_) | Self::Str(_) | Self::Relative(_) => false,
             Self::Expr(_) => true,
-            Self::Array(x) => x.iter().some(|x| x.target.is_multiline()),
+            Self::Array(x) => x.iter().any(|x| x.target.is_multiline()),
         }
     }
 }
@@ -65,7 +65,7 @@ impl fmt::Debug for TargetInner {
             Self::Str(x) => x.fmt(f),
             Self::Relative(x) => x.fmt(f),
             Self::Expr(x) => f.debug_tuple("Expr").field(x).finish(),
-            Self::Array(x) => if x.is_multiline() {
+            Self::Array(x) => if x.iter().any(|x| x.is_multiline()) {
                 f.debug_list().entries(x).finish()
             } else {
                 write!(f, "{:?}", x)
@@ -244,12 +244,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
     return Ok(pair.filter(|x| x.as_rule() == Rule::r#fn).map(|x| parse_fn(&mut names, x)).collect());
 
     fn parse_offset(mut s: &str) -> Offset {
-        let direction = match s[1] {
-            ">" => 1,
-            "<" => -1,
-            _ => unreachable!(),
-        };
-
+        let direction = if s.starts_with("@>") { 1 } else { -1 };
         Offset(direction * (&s[2..]).parse().unwrap())
     }
 
@@ -283,9 +278,9 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         })
                         .collect(),
                 ),
-                Rule::target_expr => TargetInner::Expr {
-                    expr: Box::new(parse_script(names, pair.into_inner().next().unwrap())),
-                },
+                Rule::target_expr => TargetInner::Expr(
+                    Box::new(parse_script(names, pair.into_inner().next().unwrap())),
+                ),
                 rule => unreachable!("{rule:?} is not a target"),
             }
         }
@@ -362,7 +357,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
                 Statement::Let {
                     mutable,
-                    binding: parse_let_bindable(names, let_bindable),x
+                    binding: parse_let_bindable(names, let_bindable),
                     value: let_init.map(|x| parse_target(names, x)),
                 }
             }
@@ -386,7 +381,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let mut inner = pair.into_inner();
                 LetBinding::Standard {
                     name: names.get(inner.next().unwrap().as_str()),
-                    size: inner.next().map(|x| x.into_inner().next().map(|x| x.parse().unwrap())),
+                    size: inner.next().map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap())),
                 }
             }
             Rule::let_dest => {
@@ -406,8 +401,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     }),
                     accept_inexact,
                 }
-                _ => unreachable!(),
             }
+            _ => unreachable!(),
         }
     }
 
@@ -420,10 +415,10 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         let name = names.get(inner.next().unwrap().as_str());
         let mut fn_args = inner.next().unwrap().into_inner();
         let (args, rest) = match (fn_args.next(), fn_args.next()) {
-            (None, _) => (std::iter::empty(), None),
-            (Some(a), None) if a.as_rule() == Rule::fn_rest => (std::iter::empty(), Some(a)),
-            (Some(a), None) => (a.into_inner(), None),
-            (Some(a), Some(b)) => (a.into_inner(), Some(b)),
+            (None, _) => (None, None),
+            (Some(a), None) if a.as_rule() == Rule::fn_rest => (None, Some(a)),
+            (Some(a), None) => (Some(a.into_inner()), None),
+            (Some(a), Some(b)) => (Some(a.into_inner()), Some(b)),
         };
         let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
         let body = inner.next().map(|x| parse_script(names, x)).unwrap_or(Vec::new());
@@ -431,13 +426,15 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         FnDeclaration {
             name,
             args: args.map(|x| {
-                let mut inner = x.into_inner();
-                FnParam {
-                    mutable: inner.next().unwrap().into_inner().next().is_some(),
-                    binding: parse_let_bindable(names, inner.next().unwrap()),
-                    default: inner.next().map(|x| parse_target(names, x)),
-                }
-            }).collect(),
+                x.map(|x| {
+                    let mut inner = x.into_inner();
+                    FnParam {
+                        mutable: inner.next().unwrap().into_inner().next().is_some(),
+                        binding: parse_let_bindable(names, inner.next().unwrap()),
+                        default: inner.next().map(|x| parse_target(names, x)),
+                    }
+                }).collect()
+            }).unwrap_or_default(),
             rest: rest.map(|x| {
                 let mut inner = x.into_inner();
                 FnRestParam {
