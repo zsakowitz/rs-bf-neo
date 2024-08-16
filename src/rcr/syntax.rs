@@ -6,7 +6,7 @@ use std::{collections::HashMap, fmt};
 pub struct Name(u32);
 
 impl fmt::Debug for Name {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "${}", self.0)
     }
 }
@@ -55,7 +55,7 @@ pub enum BuiltinName {
 }
 
 impl fmt::Debug for BuiltinName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "\"{}\"", match *self {
             Self::Inc => "inc",
             Self::Dec => "dec",
@@ -94,7 +94,7 @@ pub enum FnName {
 }
 
 impl fmt::Debug for FnName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             FnName::Builtin(x) => write!(f, "{x:?}"),
             FnName::UserDefined(x) => write!(f, "{x:?}"),
@@ -186,7 +186,7 @@ impl NameManager {
         }
         let value = self.next;
         self.next += 1;
-        *self.data.entry(name.to_string()).or_insert(value)
+        *self.data.entry(name.to_string()).or_insert(Name(value))
     }
 }
 
@@ -212,7 +212,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 Rule::target_array => {
                     TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
                 }
-                Rule::target_name => TargetInner::Local(Name(names.get(pair.as_str()))),
+                Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
                 Rule::target_relative => TargetInner::Relative(pair.as_str().parse().unwrap()),
                 Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
                 Rule::target_lit_str => TargetInner::Str(
