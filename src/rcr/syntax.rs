@@ -243,7 +243,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     return Ok(pair.filter(|x| x.as_rule() == Rule::r#fn).map(|x| parse_fn(&mut names, x)).collect());
 
-    fn parse_offset(mut s: &str) -> Offset {
+    fn parse_offset(s: &str) -> Offset {
         let direction: isize = if s.starts_with("@>") { 1 } else { -1 };
         Offset(direction * (&s[2..]).parse::<isize>().unwrap())
     }
