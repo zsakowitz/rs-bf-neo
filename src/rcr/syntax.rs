@@ -437,7 +437,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     binding: parse_let_bindable(names, inner.next().unwrap()),
                     default: inner.next().map(|x| parse_target(names, x)),
                 }
-            ).collect(),
+            }).collect(),
             rest: rest.map(|x| {
                 let mut inner = x.into_inner();
                 FnRestParam {
