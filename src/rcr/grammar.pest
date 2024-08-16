@@ -71,8 +71,8 @@ let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
 
 let_dest_element       = { name ~ ("=" ~ target)? }
-let_dest_maybe_element = { let_dest_tru | "_" }
-let_dest_els           = { let_dest_el* }
+let_dest_maybe_element = { let_dest_element | "_" }
+let_dest_els           = { let_dest_maybe_element* }
 let_dest_dots          = { "..." }
 let_dest               = { "[" ~ let_dest_els ~ let_dest_dots? ~ "]" }
 
