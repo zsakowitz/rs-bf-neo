@@ -99,7 +99,7 @@ fn_return = { ("->" ~ target)? }
 fn_body = _{ block | semi }
 fn      = { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
 
-main = _{ SOI ~ fn* ~ EOI }
+main = { SOI ~ fn* ~ EOI }
 
 keyword_mut        = @{ "mut" ~ !ID_CONTINUE }
 keyword_let        = @{ "let" ~ !ID_CONTINUE }

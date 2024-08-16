@@ -296,6 +296,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     /// Expects a `Rule::fn` to be passed.
     fn parse_fn(names: &mut NameManager, pair: Pair<Rule>) -> FnDeclaration {
+        assert_eq!(pair.as_rule(), Rule::r#fn);
+
         let mut inner = pair.into_inner();
         inner.next().unwrap(); // fn keyword
         let name = names.get(inner.next().unwrap().as_str());
