@@ -15,7 +15,7 @@ reserved = @{
     builtin
   | "fn"
   | "mut"
-  | "each"
+  | "for"
   | "let"
   | "while"
   | "exitable"
@@ -59,7 +59,7 @@ arg_spread = { "..." ~ target }
 let_mut = { keyword_mut? }
 
 stmt_while     = { keyword_while ~ target ~ block }
-stmt_each      = { keyword_each ~ name ~ keyword_in ~ target ~ block }
+stmt_for      = { keyword_for ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
 stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
@@ -74,7 +74,7 @@ let_array_size =  { "[" ~ uint? ~ "]" }
 let_init       = _{ "=" ~ target }
 
 stmt_needs_semi        = _{ stmt_break | stmt_call | stmt_let }
-stmt_no_mandatory_semi = _{ stmt_while | stmt_each | stmt_breakable }
+stmt_no_mandatory_semi = _{ stmt_while | stmt_for | stmt_breakable }
 
 stmt_list_semi    = {
     ((stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?))*
@@ -105,7 +105,7 @@ keyword_mut        = @{ "mut" ~ !ID_CONTINUE }
 keyword_let        = @{ "let" ~ !ID_CONTINUE }
 keyword_fn         = @{ "fn" ~ !ID_CONTINUE }
 keyword_while      = @{ "while" ~ !ID_CONTINUE }
-keyword_each       = @{ "each" ~ !ID_CONTINUE }
+keyword_for       = @{ "for" ~ !ID_CONTINUE }
 keyword_breakable  = @{ "breakable" ~ !ID_CONTINUE }
 keyword_break      = @{ "break" ~ !ID_CONTINUE }
 keyword_in         = @{ "in" ~ !ID_CONTINUE }

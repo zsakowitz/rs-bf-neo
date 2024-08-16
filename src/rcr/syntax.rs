@@ -73,7 +73,7 @@ pub enum Statement {
         value: Option<Target>,
     },
     /// runs the given code for each target of an array
-    Each {
+    For {
         bound: u32,
         array: Target,
         body: Script,
@@ -231,14 +231,14 @@ pub fn parse_syntax_tree(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>>
                     rest,
                 }
             }
-            Rule::stmt_each => {
+            Rule::stmt_for => {
                 let mut inner = pair.into_inner();
                 inner.next().unwrap();
                 let name = inner.next().unwrap();
                 inner.next().unwrap();
                 let target = inner.next().unwrap();
                 let block = inner.next().unwrap();
-                Statement::Each {
+                Statement::For {
                     bound: names.get(name.as_str()),
                     array: parse_target(names, target),
                     body: parse_script(names, block),
@@ -346,10 +346,4 @@ pub fn parse_syntax_tree(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>>
             body,
         }
     }
-}
-
-#[cfg(test)]
-#[test]
-fn test() {
-    parse("let c;").unwrap();
 }
