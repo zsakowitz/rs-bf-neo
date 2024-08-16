@@ -11,10 +11,23 @@ impl fmt::Debug for Name {
     }
 }
 
+#[derive(Copy, Clone, Hash)]
+pub struct Offset(isize);
+
+impl fmt::Debug for Offset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => write!(f, "@"),
+            0.. => write!(f, "@>{}", x),
+            ..=0 => write!(f, "@<{}", -x),
+        }
+    }
+}
+
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Hash)]
 #[non_exhaustive]
 pub enum TargetInner {
     /// references a local
@@ -28,9 +41,30 @@ pub enum TargetInner {
     /// creates a new local with the given value
     Str(String),
     /// references a cell relative to the one currently pointed at
-    Relative(isize),
+    Relative(Offset),
     /// returns the value of the last statement
     Expr { expr: Box<Script> },
+}
+
+impl TargetInner {
+    fn is_multiline(&self) -> bool {
+        match self {
+            Self::Local(_) | Self::Int(_) | Self::Char(_) | Self::Str(_) | Self::Relative(_) => false,
+            Self::Expr(_) => true,
+            Self::Array(x) => x.iter().some(|x| x.target.is_multiline()),
+        }
+    }
+}
+
+impl fmt::Debug for TargetInner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local(x) => x.fmt(f),
+            Self::Int(x) => x.fmt(f),
+            Self::Char(x) => x.fmt(f),
+            Self::Str(x) => x.fmt(f),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -196,6 +230,16 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     return Ok(pair.filter(|x| x.as_rule() == Rule::r#fn).map(|x| parse_fn(&mut names, x)).collect());
 
+    fn parse_offset(mut s: &str) -> Offset {
+        let direction = match s[1] {
+            ">" => 1,
+            "<" => -1,
+            _ => unreachable!(),
+        };
+
+        Offset(direction * (&s[2..]).parse().unwrap())
+    }
+
     /// Expects a `Rule::target` to be passed.
     fn parse_target(names: &mut NameManager, pair: Pair<Rule>) -> Target {
         let mut inner = pair.into_inner();
@@ -213,7 +257,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
                 }
                 Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
-                Rule::target_relative => TargetInner::Relative(pair.as_str().parse().unwrap()),
+                Rule::target_relative => TargetInner::Relative(parse_offset(pair.as_str())),
                 Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
                 Rule::target_lit_str => TargetInner::Str(
                     pair.into_inner()
