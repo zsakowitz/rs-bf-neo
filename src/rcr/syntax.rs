@@ -5,9 +5,9 @@ use std::{collections::HashMap, fmt};
 #[derive(Copy, Clone, Debug, Hash)]
 pub struct Name(u32);
 
-impl Debug for Name {
+impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
-        write!("${}", self.0)
+        write!(f, "${}", self.0)
     }
 }
 
@@ -54,9 +54,9 @@ pub enum BuiltinName {
     AssertIsUnknown,
 }
 
-impl Debug for BuiltinName {
+impl fmt::Debug for BuiltinName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
-        write!("\"{}\"", match *self {
+        write!(f, "\"{}\"", match *self {
             Self::Inc => "inc",
             Self::Dec => "dec",
             Self::Read => "read",
@@ -93,7 +93,7 @@ pub enum FnName {
     UserDefined(Name),
 }
 
-impl Debug for FnName {
+impl fmt::Debug for FnName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
         match *self {
             FnName::Builtin(x) => write!(f, "{x:?}"),
