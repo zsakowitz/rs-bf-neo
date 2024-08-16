@@ -303,39 +303,40 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
         let body = inner.next().map(|x| parse_script(names, x)).unwrap_or(Vec::new());
         
-        let args = Vec::new();
-        let rest = None;
-        for arg in fn_args {
-            match arg.as_rule() {
-                Rule::fn_arg => {
-                    let mut inner = arg.into_inner();
-                    let mutable = inner.next().unwrap().into_inner().next().is_some();
-                    let name = names.get(inner.next().unwrap().as_str());
-                    let size = inner.next().unwrap().into_inner().next().map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap()));
-                    let default = inner.next().map(|x| parse_target(names, x));
+        let mut args = Vec::new();
+        let rest = 'a: {
+            for arg in fn_args {
+                match arg.as_rule() {
+                    Rule::fn_arg => {
+                        let mut inner = arg.into_inner();
+                        let mutable = inner.next().unwrap().into_inner().next().is_some();
+                        let name = names.get(inner.next().unwrap().as_str());
+                        let size = inner.next().unwrap().into_inner().next().map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap()));
+                        let default = inner.next().map(|x| parse_target(names, x));
 
-                    args.push(FnParam {
-                        mutable,
-                        name,
-                        size,
-                        default,
-                    });
+                        args.push(FnParam {
+                            mutable,
+                            name,
+                            size,
+                            default,
+                        });
+                    }
+                    Rule::fn_rest => {
+                        let mut inner = arg.into_inner();
+                        let mutable = inner.next().unwrap().into_inner().next().is_some();
+                        let name = names.get(inner.next().unwrap().as_str());
+                        
+                        break Some(FnRestParam {
+                            name,
+                            mutable,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
-                Rule::fn_rest => {
-                    let mut inner = arg.into_inner();
-                    let mutable = inner.next().unwrap().into_inner().next().is_some();
-                    let name = names.get(inner.next().unwrap().as_str());
-                    
-                    rest = Some(FnRestParam {
-                        name,
-                        mutable,
-                    });
-
-                    break;
-                }
-                _ => unreachable!(),
             }
-        }
+
+            None
+        };
 
         FnDeclaration {
             name,
