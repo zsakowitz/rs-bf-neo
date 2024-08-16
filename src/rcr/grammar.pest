@@ -54,7 +54,7 @@ fn_name       = ${ fn_name_inner ~ !ID_CONTINUE }
 call_unsafe = { keyword_unsafe? }
 
 arg_list   = { arg* }
-arg_spread = { "..." ~ target }
+arg_spread = { ("..." ~ target)? }
 
 let_mut = { keyword_mut? }
 
