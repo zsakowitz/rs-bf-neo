@@ -2,7 +2,7 @@ use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Copy, Clone, Debug, Hash)]
 pub struct Name(u32);
 
 impl Debug for Name {
@@ -94,7 +94,7 @@ pub enum FnName {
 }
 
 impl Debug for FnName {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result<()> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
         match *self {
             FnName::Builtin(x) => write!(f, "{x:?}"),
             FnName::UserDefined(x) => write!(f, "{x:?}"),
