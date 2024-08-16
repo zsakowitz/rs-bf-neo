@@ -24,6 +24,18 @@ impl fmt::Debug for Offset {
     }
 }
 
+#[derive(Clone, Debug, Hash)]
+pub enum LiteralSingle {
+    Int(i32),
+    Str(String),
+}
+
+#[derive(Clone, Debug, Hash)]
+pub enum Literal {
+    Single(LiteralSingle),
+    Array(Vec<LiteralSingle>),
+}
+
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
@@ -34,8 +46,6 @@ pub enum TargetInner {
     Local(Name),
     /// creates a new local with the given value
     Int(i32),
-    /// creates a new local with the given value
-    Char(char),
     /// creates a new local with the given value
     Str(String),
     /// references a cell relative to the one currently pointed at
@@ -49,9 +59,7 @@ pub enum TargetInner {
 impl TargetInner {
     fn is_multiline(&self) -> bool {
         match self {
-            Self::Local(_) | Self::Int(_) | Self::Char(_) | Self::Str(_) | Self::Relative(_) => {
-                false
-            }
+            Self::Local(_) | Self::Int(_) | Self::Str(_) | Self::Relative(_) => false,
             Self::Expr(_) => true,
             Self::Array(x) => x.iter().any(|x| x.inner.is_multiline()),
         }
@@ -63,7 +71,6 @@ impl fmt::Debug for TargetInner {
         match self {
             Self::Local(x) => x.fmt(f),
             Self::Int(x) => x.fmt(f),
-            Self::Char(x) => x.fmt(f),
             Self::Str(x) => x.fmt(f),
             Self::Relative(x) => x.fmt(f),
             Self::Expr(x) => f.debug_tuple("Expr").field(x).finish(),
@@ -131,7 +138,10 @@ pub type ArraySize = Option<Option<usize>>;
 #[non_exhaustive]
 pub enum LetBindingInDestructure {
     Ignored,
-    Named { name: Name, default: Option<Target> },
+    Named {
+        name: Name,
+        default: Option<Literal>,
+    },
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -170,7 +180,7 @@ pub enum Statement {
     Let {
         binding: LetBinding,
         mutable: bool,
-        value: Option<Target>,
+        value: Option<Literal>,
     },
     /// runs the given code for each target of an array
     For {
@@ -195,7 +205,7 @@ pub enum Statement {
 pub struct FnParam {
     pub(super) mutable: bool,
     pub(super) binding: LetBinding,
-    pub(super) default: Option<Target>,
+    pub(super) default: Option<Literal>,
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -257,8 +267,43 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
         .collect());
 
     fn parse_offset(s: &str) -> Offset {
-        let direction: isize = if s.starts_with("@>") { 1 } else { -1 };
-        Offset(direction * (&s[2..]).parse::<isize>().unwrap())
+        let direction = match s {
+            "@" => return Offset(0),
+            _ if s.starts_with(">") => 1,
+            _ => -1,
+        };
+        let size = s[1..].parse::<isize>().unwrap();
+        Offset(direction * size)
+    }
+
+    fn parse_str(pair: Pair<Rule>) -> String {
+        pair.into_inner()
+            .map(|pair| match pair.as_str() {
+                "\\\\" => "\\",
+                "\\\"" => "\"",
+                "\\\n" => "\n",
+                "\\\r" => "\r",
+                x => x,
+            })
+            .collect()
+    }
+
+    fn parse_literal(pair: Pair<Rule>) -> Literal {
+        return match pair.as_rule() {
+            Rule::literal_one => Literal::Single(parse_literal_one(pair)),
+            Rule::literal_array => {
+                Literal::Array(pair.into_inner().map(|x| parse_literal_one(x)).collect())
+            }
+            _ => unreachable!(),
+        };
+
+        fn parse_literal_one(pair: Pair<Rule>) -> LiteralSingle {
+            match pair.as_rule() {
+                Rule::int => LiteralSingle::Int(pair.as_str().parse().unwrap()),
+                Rule::str => LiteralSingle::Str(parse_str(pair)),
+                _ => unreachable!(),
+            }
+        }
     }
 
     /// Expects a `Rule::target` to be passed.
@@ -279,18 +324,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 }
                 Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
                 Rule::target_relative => TargetInner::Relative(parse_offset(pair.as_str())),
-                Rule::target_lit_int => TargetInner::Int(pair.as_str().parse().unwrap()),
-                Rule::target_lit_str => TargetInner::Str(
-                    pair.into_inner()
-                        .map(|pair| match pair.as_str() {
-                            "\\\\" => "\\",
-                            "\\\"" => "\"",
-                            "\\\n" => "\n",
-                            "\\\r" => "\r",
-                            x => x,
-                        })
-                        .collect(),
-                ),
+                Rule::int => TargetInner::Int(pair.as_str().parse().unwrap()),
+                Rule::str => TargetInner::Str(parse_str(pair)),
                 Rule::target_expr => TargetInner::Expr(Box::new({
                     let inner = pair.into_inner().next().unwrap();
                     match inner.as_rule() {
@@ -381,7 +416,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 Statement::Let {
                     mutable,
                     binding: parse_let_bindable(names, let_bindable),
-                    value: let_init.map(|x| parse_target(names, x)),
+                    value: let_init.map(parse_literal),
                 }
             }
             _ => todo!(),
@@ -427,7 +462,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                                 let mut inner = x.into_inner();
                                 LetBindingInDestructure::Named {
                                     name: names.get(inner.next().unwrap().as_str()),
-                                    default: inner.next().map(|x| parse_target(names, x)),
+                                    default: inner.next().map(parse_literal),
                                 }
                             }
                             None => LetBindingInDestructure::Ignored,
@@ -474,7 +509,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         FnParam {
                             mutable: inner.next().unwrap().into_inner().next().is_some(),
                             binding: parse_let_bindable(names, inner.next().unwrap()),
-                            default: inner.next().map(|x| parse_target(names, x)),
+                            default: inner.next().map(parse_literal),
                         }
                     })
                     .collect()

@@ -42,17 +42,20 @@ offset = @{ ("<" | ">") ~ uint? }
 target_expr_one   = { "(" ~ stmt_any ~ ")" }
 target_expr_block = { block_no_semi }
 
+str           = @{ "\"" ~ char_dq* ~ "\"" }
+literal_one   = _{ int | str }
+literal_array =  { "[" ~ literal_one* ~ "]" }
+literal       = _{ literal_one | literal_array }
+
 target_name     =  { name }
 target_array    =  { "[" ~ (target*) ~ "]" }
-target_lit_int  =  { int }
-target_lit_str  = @{ "\"" ~ char_dq* ~ "\"" }
 target_expr     =  { target_expr_one | target_expr_block }
-target_relative = @{ "@" ~ offset? }
+target_relative = @{ "@" | offset }
 target_inner    =  {
     target_name
   | target_array
-  | target_lit_int
-  | target_lit_str
+  | int
+  | str
   | target_expr
   | target_relative
 }
@@ -70,22 +73,22 @@ arg_spread = { ("..." ~ target)? }
 
 let_mut = { keyword_mut? }
 
-stmt_while     = { keyword_while ~ target ~ block }
-stmt_for       = { keyword_for ~ let_mut ~ name ~ keyword_in ~ target ~ block }
-stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
-stmt_let       = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
+stmt_while = { keyword_while ~ target ~ block }
+stmt_for   = { keyword_for ~ let_mut ~ name ~ keyword_in ~ target ~ block }
+stmt_call  = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
+stmt_let   = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
 
 let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
 
-let_dest_element       = { name ~ ("=" ~ target)? }
+let_dest_element       = { name ~ ("=" ~ literal)? }
 let_dest_maybe_element = { let_dest_element | "_" }
 let_dest_els           = { let_dest_maybe_element* }
 let_dest_dots          = { "..." }
 let_dest               = { "[" ~ let_dest_els ~ let_dest_dots? ~ "]" }
 
 let_array_size =  { "[" ~ uint? ~ "]" }
-let_init       = _{ "=" ~ target }
+let_init       = _{ "=" ~ literal }
 
 stmt_needs_semi        = _{ stmt_call | stmt_let }
 stmt_no_mandatory_semi = _{ stmt_while | stmt_for }
@@ -103,17 +106,17 @@ block         = _{ "{" ~ stmt_list_semi ~ "}" }
 block_no_semi = _{ "{" ~ stmt_list_no_semi ~ "}" }
 
 fn_arg_mut     = { keyword_mut? }
-fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
+fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ literal)? }
 fn_normal_args = { fn_arg ~ ("," ~ fn_arg)* }
 fn_rest        = { "..." ~ fn_arg_mut ~ name }
-fn_args     = {
+fn_args        = {
     "(" ~ fn_rest? ~ ")"
   | "(" ~ fn_normal_args ~ ("," ~ fn_rest?)? ~ ")"
 }
-fn_return = { ("->" ~ target)? }
+fn_return      = { ("->" ~ target)? }
 
 fn_body = _{ block | semi }
-fn      = { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
+fn      =  { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
 
 main = { SOI ~ fn* ~ EOI }
 

@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use crate::rcr::Name;
+
 use super::syntax::{FnDeclaration, Statement};
 
 #[derive(Clone, Debug, Default)]
@@ -7,27 +11,20 @@ struct Output {
 
 #[derive(Copy, Clone, Debug)]
 struct Scope<'a> {
-    parent: Option<&'a Scope>,
+    parent: Option<&'a Scope<'a>>,
     fns: &'a [FnDeclaration],
 }
 
 impl<'a> Scope<'a> {
     fn new(fns: &'a [FnDeclaration]) -> Self {
-        Self {
-            parent: None,
-            fns,
-        }
+        Self { parent: None, fns }
     }
 
-    fn child(&self, fns: &[FnDeclaration]) -> Scope {
+    fn child(&'a self, fns: &'a [FnDeclaration]) -> Scope {
         Scope {
-            parent: &self,
+            parent: Some(self),
             fns,
         }
-    }
-
-    fn run(self, stmts: &[Statement]) {
-
     }
 }
 
@@ -73,6 +70,7 @@ impl Locals {
             }),
             mutable,
         };
-        self.locals.entry(name)
+        todo!()
+        // self.locals.entry(name)
     }
 }
