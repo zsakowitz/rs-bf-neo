@@ -81,7 +81,7 @@ pub struct Target {
     index: Option<u32>,
 }
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug, Default, Hash)]
 #[non_exhaustive]
 pub struct Script {
     stmts: Vec<Statement>,
@@ -283,7 +283,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         })
                         .collect(),
                 ),
-                Rule::target_expr => TargetInner::Expr({
+                Rule::target_expr => TargetInner::Expr(Box::new({
                     let inner = pair.into_inner().next().unwrap();
                     match inner.as_rule() {
                         Rule::target_expr_one => Script {
@@ -293,7 +293,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         Rule::target_expr_block => parse_script(names, inner.into_inner().next().unwrap()),
                         _ => unreachable!(),
                     }
-                }),
+                })),
                 rule => unreachable!("{rule:?} is not a target"),
             }
         }
@@ -380,8 +380,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     /// Expects a `Rule::stmt_list_...` to be passed.
     fn parse_script(names: &mut NameManager, pair: Pair<Rule>) -> Script {
-        let fns = Vec::new();
-        let stmts = Vec::new();
+        let mut fns = Vec::new();
+        let mut stmts = Vec::new();
 
         for x in pair.into_inner() {
             if x.as_rule() == Rule::r#fn {
@@ -441,7 +441,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
             (Some(a), Some(b)) => (Some(a.into_inner()), Some(b)),
         };
         let returns = inner.next().unwrap().into_inner().next().map(|x| parse_target(names, x));
-        let body = inner.next().map(|x| parse_script(names, x)).unwrap_or(Vec::new());
+        let body = inner.next().map(|x| parse_script(names, x)).unwrap_or_default();
 
         FnDeclaration {
             name,
