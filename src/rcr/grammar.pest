@@ -61,7 +61,7 @@ arg_spread = { ("..." ~ target)? }
 let_mut = { keyword_mut? }
 
 stmt_while     = { keyword_while ~ target ~ block }
-stmt_for      = { keyword_for ~ name ~ keyword_in ~ target ~ block }
+stmt_for       = { keyword_for ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
 stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
