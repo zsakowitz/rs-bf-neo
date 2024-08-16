@@ -91,6 +91,7 @@ pub enum Statement {
         name: FnName,
         is_unsafe: bool,
         args: Vec<Option<Target>>,
+        rest: Option<Target>,
     },
 }
 

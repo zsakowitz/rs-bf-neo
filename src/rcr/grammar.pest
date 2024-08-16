@@ -53,11 +53,14 @@ fn_name       = ${ fn_name_inner ~ !ID_CONTINUE }
 
 call_unsafe = { keyword_unsafe? }
 
+arg_list   = { arg* }
+arg_spread = { "..." ~ target }
+
 stmt_while     = { keyword_while ~ target ~ block }
 stmt_each      = { keyword_each ~ name ~ keyword_in ~ target ~ block }
 stmt_breakable = { keyword_breakable ~ target? ~ block }
 stmt_break     = { keyword_break }
-stmt_call      = { call_unsafe ~ fn_name ~ arg* }
+stmt_call      = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
 stmt_let       = { keyword_let ~ let_bindable ~ let_init? }
 
 let_bindable      = _{ let_bind_dest | let_bind_standard }
