@@ -245,7 +245,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     fn parse_offset(mut s: &str) -> Offset {
         let direction: isize = if s.starts_with("@>") { 1 } else { -1 };
-        Offset(direction * (&s[2..]).parse().unwrap())
+        Offset(direction * (&s[2..]).parse::<isize>().unwrap())
     }
 
     /// Expects a `Rule::target` to be passed.
