@@ -2,7 +2,7 @@ use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::{collections::HashMap, fmt};
 
-#[derive(Copy, Clone, Debug, Hash)]
+#[derive(Copy, Clone, Hash)]
 pub struct Name(u32);
 
 impl fmt::Debug for Name {
