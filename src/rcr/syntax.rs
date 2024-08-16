@@ -148,7 +148,7 @@ impl NameManager {
     }
 }
 
-fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
+pub fn parse_syntax_tree(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
     let pairs = MyParser::parse(Rule::main, input)?;
     let mut names = NameManager::new();
 

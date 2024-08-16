@@ -1,5 +1,7 @@
 mod syntax;
 
+pub use syntax::*;
+
 enum RcrTarget {
     Retval(usize),
     Local(usize),
