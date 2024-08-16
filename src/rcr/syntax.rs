@@ -5,6 +5,12 @@ use std::collections::HashMap;
 #[derive(Clone, Debug, Hash)]
 pub struct Name(u32);
 
+impl Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
+        write!("${}", self.0)
+    }
+}
+
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
@@ -36,7 +42,7 @@ pub struct Target {
 
 pub type Script = Vec<Statement>;
 
-#[derive(Clone, Hash)]
+#[derive(Copy, Clone, Hash)]
 #[non_exhaustive]
 pub enum BuiltinName {
     Inc,
@@ -50,8 +56,7 @@ pub enum BuiltinName {
 
 impl Debug for BuiltinName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result<()> {
-        f.write_str("\"")?;
-        f.write_str(match *self {
+        write!("\"{}\"", match *self {
             Self::Inc => "inc",
             Self::Dec => "dec",
             Self::Read => "read",
@@ -59,8 +64,7 @@ impl Debug for BuiltinName {
             Self::Goto => "goto",
             Self::AssertIsZero => "assert::is_zero",
             Self::AssertIsUnknown => "assert::is_unknown",
-        });
-        f.write_str("\"")
+        })
     }
 }
 
@@ -82,11 +86,20 @@ pub enum LetBinding {
     },
 }
 
-#[derive(Clone, Hash)]
+#[derive(Copy, Clone, Hash)]
 #[non_exhaustive]
 pub enum FnName {
-    UserDefined(Name),
     Builtin(BuiltinName),
+    UserDefined(Name),
+}
+
+impl Debug for FnName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result<()> {
+        match *self {
+            FnName::Builtin(x) => write!(f, "{x:?}"),
+            FnName::UserDefined(x) => write!(f, "{x:?}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash)]
