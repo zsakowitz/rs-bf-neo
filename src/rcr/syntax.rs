@@ -59,7 +59,8 @@ pub enum LetBinding {
     },
 }
 
-pub struct FnName {
+#[derive(Clone, Debug, Hash)]
+pub enum FnName {
     UserDefined(u32),
     Builtin(BuiltinName),
 }
