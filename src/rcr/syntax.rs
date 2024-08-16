@@ -12,7 +12,7 @@ impl fmt::Debug for Name {
 }
 
 #[derive(Copy, Clone, Hash)]
-pub struct Offset(isize);
+pub struct Offset(pub(super) isize);
 
 impl fmt::Debug for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -80,16 +80,16 @@ impl fmt::Debug for TargetInner {
 
 #[derive(Clone, Debug, Hash)]
 pub struct Target {
-    inner: TargetInner,
+    pub(super) inner: TargetInner,
     /// an index into the target (if it's an array)
-    index: Option<u32>,
+    pub(super) index: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Hash)]
 #[non_exhaustive]
 pub struct Script {
-    stmts: Vec<Statement>,
-    fns: Vec<FnDeclaration>,
+    pub(super) stmts: Vec<Statement>,
+    pub(super) fns: Vec<FnDeclaration>,
 }
 
 #[derive(Copy, Clone, Hash)]
@@ -193,28 +193,28 @@ pub enum Statement {
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub struct FnParam {
-    mutable: bool,
-    binding: LetBinding,
-    default: Option<Target>,
+    pub(super) mutable: bool,
+    pub(super) binding: LetBinding,
+    pub(super) default: Option<Target>,
 }
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub struct FnRestParam {
-    mutable: bool,
-    name: Name,
+    pub(super) mutable: bool,
+    pub(super) name: Name,
 }
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub struct FnDeclaration {
-    name: Name,
-    args: Vec<FnParam>,
-    rest: Option<FnRestParam>,
+    pub(super) name: Name,
+    pub(super) args: Vec<FnParam>,
+    pub(super) rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
-    returns: Option<Target>,
-    body: Script,
+    pub(super) returns: Option<Target>,
+    pub(super) body: Script,
 }
 
 #[derive(Parser)]
