@@ -149,10 +149,10 @@ impl NameManager {
 }
 
 pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
-    let pairs = MyParser::parse(Rule::main, input)?;
+    let pair = MyParser::parse(Rule::main, input)?.next().unwrap().into_inner();
     let mut names = NameManager::new();
 
-    return Ok(pairs.map(|x| parse_fn(&mut names, x)).collect());
+    return Ok(pair.map(|x| parse_fn(&mut names, x)).collect());
 
     /// Expects a `Rule::target` to be passed.
     fn parse_target(names: &mut NameManager, pair: Pair<Rule>) -> Target {
