@@ -69,6 +69,7 @@ pub enum Statement {
     /// declares a variable
     Let {
         binding: LetBinding,
+        mutable: bool,
         value: Option<Target>,
     },
     /// runs the given code for each target of an array
@@ -210,11 +211,12 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let mut inner = pair.into_inner();
                 let is_unsafe = inner.next().unwrap().into_inner().next().is_some();
                 let fn_name = inner.next().unwrap().as_str();
-                let args = inner.map(|x| match x.as_rule() {
+                let args = inner.next().unwrap().into_inner().map(|x| match x.as_rule() {
                     Rule::target => Some(parse_target(names, x)),
                     Rule::keyword_underscore => None,
                     _ => unreachable!(),
                 }).collect();
+                let rest = inner.next().unwrap().into_inner().map(|x| parse_target(names, x));
                 Statement::Call {
                     name: match fn_name {
                         "inc" => FnName::Builtin(BuiltinName::Inc),
@@ -226,6 +228,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     },
                     is_unsafe,
                     args,
+                    rest,
                 }
             }
             Rule::stmt_each => {
@@ -254,6 +257,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
             Rule::stmt_let => {
                 let mut inner = pair.into_inner();
                 inner.next().unwrap();
+                let mutable = inner.next().unwrap().into_inner().next().is_some();
                 let let_bindable = inner.next().unwrap();
                 let let_init = inner.next();
 
@@ -273,6 +277,7 @@ fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         }
                         _ => unreachable!(),
                     },
+                    mutable,
                     value: let_init.map(|x| parse_target(names, x)),
                 }
             }
