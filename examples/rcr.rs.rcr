@@ -65,8 +65,21 @@ fn is_nonzero(mut a, mut output = 0) -> output {
     }
 }
 
-fn breakable_loop() {
-    breakable {
+fn more_let_examples(
+    [a b c],
+    mut d,
+    mut f = 23,
+    mut [g h=90] = [23 78],
+) {
+    let a;
+    let a[2];
+    let a[]; // runtime error
 
-    }
+    let a = 'c';
+    let mut a = "String";
+    let a = 23;
+
+    let mut [a b ...] = "String";
+    let [a=2 b=3] = "array";
+    let mut [a=2 b c=3 ...] = "world";
 }
