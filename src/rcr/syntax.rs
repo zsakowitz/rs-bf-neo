@@ -32,8 +32,6 @@ impl fmt::Debug for Offset {
 pub enum TargetInner {
     /// references a local
     Local(Name),
-    /// references a block of targets
-    Array(Vec<Target>),
     /// creates a new local with the given value
     Int(i32),
     /// creates a new local with the given value
@@ -42,6 +40,8 @@ pub enum TargetInner {
     Str(String),
     /// references a cell relative to the one currently pointed at
     Relative(Offset),
+    /// references a block of targets
+    Array(Vec<Target>),
     /// returns the value of the last statement
     Expr { expr: Box<Script> },
 }
@@ -63,6 +63,13 @@ impl fmt::Debug for TargetInner {
             Self::Int(x) => x.fmt(f),
             Self::Char(x) => x.fmt(f),
             Self::Str(x) => x.fmt(f),
+            Self::Relative(x) => x.fmt(f),
+            Self::Expr(x) => f.debug_tuple("Expr").field(x).finish(),
+            Self::Array(x) => if x.is_multiline() {
+                f.debug_list().entries(x).finish()
+            } else {
+                write!(f, "{:?}", x)
+            }
         }
     }
 }
