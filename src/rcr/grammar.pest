@@ -80,6 +80,7 @@ stmt_let   = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
 let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
 
+// FEAT: maybe allow single-character strings instead of just ints here
 let_dest_element       = { name ~ ("=" ~ int)? }
 let_dest_maybe_element = { let_dest_element | "_" }
 let_dest_els           = { let_dest_maybe_element* }

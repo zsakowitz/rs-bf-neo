@@ -66,9 +66,9 @@ pub enum EmitError {
     InitializedScalarFromIntArray,
     InitializedScalarFromEmptyString,
     InitializedScalarFromMultiByteString,
-    InitializedArrayFromScalar,
-    InitializedArrayFromIncorrectlySizedString,
+    InitializedArrayFromInt,
     InitializedArrayFromIncorrectlySizedIntArray,
+    InitializedArrayFromIncorrectlySizedString,
 }
 
 pub type Result<T> = std::result::Result<T, EmitError>;
@@ -124,7 +124,7 @@ mod locals {
 
     use crate::rcr::{
         emit::{Context, EmitError, Local, LocalInner, Result, Single},
-        syntax::{Binding, Let, Literal, Name, Size},
+        syntax::{Binding, BindingInDestructure, Let, Literal, Name, Size},
     };
 
     #[derive(Clone, Debug)]
@@ -136,11 +136,22 @@ mod locals {
     }
 
     impl Locals {
+        fn save(&mut self, local: Local, name: Name) -> &mut Local {
+            match self.locals.entry(name) {
+                Entry::Occupied(mut entry) => {
+                    let old = entry.insert(local);
+                    self.inaccessible.push(old);
+                    entry.into_mut()
+                }
+                Entry::Vacant(entry) => entry.insert(local),
+            }
+        }
+
         /// Creates a local with the given mutability, name, and size.
         ///
-        /// If name is None, the local is created but is unnamed and inaccessible.
+        /// If `name` is [`None`], the local is created but is unnamed and inaccessible.
         ///
-        /// If size is None, the local is a cell. Otherwise, it is an array of cells.
+        /// If `size` is [`None`], the local is a cell. Otherwise, it is an array of cells.
         fn internal(
             &mut self,
             mutable: bool,
@@ -152,7 +163,7 @@ mod locals {
                 .map(|x| isize::try_from(x).expect("the size fits into an `isize`"))
                 .unwrap_or(1);
             self.next += isize;
-            let new = Local {
+            let local = Local {
                 inner: match size {
                     Some(_) => LocalInner::Array(
                         (0..isize)
@@ -170,22 +181,28 @@ mod locals {
                 mutable,
             };
             match name {
-                Some(name) => match self.locals.entry(name) {
-                    Entry::Occupied(mut entry) => {
-                        let old = entry.insert(new);
-                        self.inaccessible.push(old);
-                        entry.into_mut()
-                    }
-                    Entry::Vacant(entry) => entry.insert(new),
-                },
+                Some(name) => self.save(local, name),
                 None => {
-                    self.inaccessible.push(new);
+                    self.inaccessible.push(local);
                     self.inaccessible.last_mut().expect("we just pushed it")
                 }
             }
         }
 
-        pub fn from_let_binding(
+        /// Creates an array of locals with the given size.
+        fn internal_for_destructuring(&mut self, size: usize) -> Vec<Single> {
+            let next = self.next;
+            let isize = isize::try_from(size).expect("the size fits into an `isize`");
+            self.next += isize;
+            (0..isize)
+                .map(|x| Single {
+                    pos: next + x,
+                    is_zero: true,
+                })
+                .collect()
+        }
+
+        pub fn from_let(
             &mut self,
             context: &mut Context,
             Let {
@@ -193,7 +210,7 @@ mod locals {
                 binding,
                 value,
             }: Let,
-        ) -> Result<&mut Local> {
+        ) -> Result<()> {
             match binding {
                 Binding::Standard { name, size } => {
                     let size = match size {
@@ -251,7 +268,7 @@ mod locals {
                                     // no initializer and value is already zeroed
                                 }
                                 Some(Literal::Int(_)) => {
-                                    return Err(EmitError::InitializedArrayFromScalar);
+                                    return Err(EmitError::InitializedArrayFromInt);
                                 }
                                 Some(Literal::IntArray(ref ints)) => {
                                     if ints.len() != array.len() {
@@ -279,17 +296,92 @@ mod locals {
                         }
                     }
 
-                    match &mut local.inner {
-                        LocalInner::Single(cell) => {}
-                        LocalInner::Array(array) => {}
-                    }
-
-                    Ok(local)
+                    Ok(())
                 }
                 Binding::Destructured {
                     els,
                     accept_inexact,
-                } => todo!(),
+                } => {
+                    let size = if accept_inexact {
+                        let min_len = els.len();
+
+                        match value {
+                            None => min_len,
+                            Some(Literal::Int(_)) => {
+                                return Err(EmitError::InitializedArrayFromInt)
+                            }
+                            Some(Literal::IntArray(ref arr)) => arr.len().max(min_len),
+                            Some(Literal::Str(ref str)) => str.len().max(min_len),
+                        }
+                    } else {
+                        els.len()
+                    };
+
+                    let mut array: Vec<_> = self
+                        .internal_for_destructuring(size)
+                        .into_iter()
+                        // the value and whether it has been initialized
+                        .map(|x| (x, false))
+                        .collect();
+
+                    match value {
+                        None => {
+                            // everything is already zeroed, so do nothing
+                        }
+                        Some(Literal::Int(_)) => return Err(EmitError::InitializedArrayFromInt),
+                        Some(Literal::IntArray(arr)) => {
+                            if !accept_inexact && arr.len() != els.len() {
+                                return Err(
+                                    EmitError::InitializedArrayFromIncorrectlySizedIntArray,
+                                );
+                            }
+
+                            for (index, value) in arr.into_iter().enumerate() {
+                                if !els[index].is_ignored() {
+                                    context.goto(array[index].0.pos);
+                                    context.output.set_current_signed(value);
+                                    array[index].1 = true;
+                                }
+                            }
+                        }
+                        Some(Literal::Str(str)) => {
+                            if !accept_inexact && str.len() != els.len() {
+                                return Err(EmitError::InitializedArrayFromIncorrectlySizedString);
+                            }
+
+                            for (index, value) in str.bytes().enumerate() {
+                                if !els[index].is_ignored() {
+                                    context.goto(array[index].0.pos);
+                                    context.output.set_current_unsigned(value);
+                                    array[index].1 = true;
+                                }
+                            }
+                        }
+                    }
+
+                    for (index, el) in array.into_iter().enumerate() {
+                        let BindingInDestructure::Named { name, default } = &els[index] else {
+                            continue;
+                        };
+
+                        if !el.1 {
+                            if let Some(value) = default {
+                                context.goto(el.0.pos);
+                                context.output.set_current_signed(*value);
+                            }
+                        }
+
+                        self.save(
+                            Local {
+                                inner: LocalInner::Single(el.0),
+                                mutable,
+                            },
+                            *name,
+                        );
+                    }
+
+                    todo!()
+                }
             }
         }
     }
