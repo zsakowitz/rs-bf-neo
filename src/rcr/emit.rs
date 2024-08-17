@@ -185,18 +185,7 @@ fn stmt_let(
             els,
             accept_inexact,
         } => {
-            let size = if accept_inexact {
-                let min_len = els.len();
-
-                match value {
-                    None => min_len,
-                    Some(Literal::Int(_)) => return Err(EmitError::InitializedArrayFromInt),
-                    Some(Literal::IntArray(ref arr)) => arr.len().max(min_len),
-                    Some(Literal::Str(ref str)) => str.len().max(min_len),
-                }
-            } else {
-                els.len()
-            };
+            let size = els.len();
 
             let mut array: Vec<_> = locals
                 .internal_for_destructuring(size)
@@ -216,7 +205,7 @@ fn stmt_let(
                     }
 
                     for (index, value) in arr.into_iter().enumerate() {
-                        if !els[index].is_ignored() {
+                        if els.get(index).map(|x| !x.is_ignored()).unwrap_or_default() {
                             tracker.set_i32(&mut array[index].0, value);
                             array[index].1 = true;
                         }
@@ -228,7 +217,7 @@ fn stmt_let(
                     }
 
                     for (index, value) in str.bytes().enumerate() {
-                        if !els[index].is_ignored() {
+                        if els.get(index).map(|x| !x.is_ignored()).unwrap_or_default() {
                             tracker.set_u8(&mut array[index].0, value);
                             array[index].1 = true;
                         }
@@ -402,12 +391,13 @@ fn test() {
                     default: Some(34),
                 },
             ],
-            accept_inexact: false,
+            accept_inexact: true,
         },
-        value: None,
+        value: Some(Literal::Str("Hello world".to_string())),
     };
 
     stmt_let(&mut tracker, &mut locals, l).unwrap();
 
     println!("{locals:#?}");
+    println!("{output:?}");
 }
