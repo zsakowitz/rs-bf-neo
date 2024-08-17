@@ -46,6 +46,7 @@ struct Local {
     mutable: bool,
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum EmitError {
     AutoSizedArrayIsMissingInitializer,
     AutoSizedArrayIsInitializedWithScalar,
@@ -59,25 +60,6 @@ pub enum EmitError {
 
 pub type Result<T> = std::result::Result<T, EmitError>;
 
-impl Output {
-    fn set_current_signed(
-        &mut self,
-        value: impl TryInto<usize, Error: Debug>
-            + std::ops::Neg<Output: TryInto<usize, Error: Debug> + std::cmp::PartialOrd<i32>>
-            + std::cmp::PartialOrd<i32>,
-    ) {
-        if value > 0 {
-            self.data += &"+".repeat(value.try_into().unwrap());
-        } else if value < 0 {
-            self.data += &"-".repeat((-value).try_into().unwrap());
-        }
-    }
-
-    fn set_current_unsigned(&mut self, value: impl Into<usize>) {
-        self.data += &"+".repeat(value.try_into().unwrap());
-    }
-}
-
 impl<'a> PosTracker<'a> {
     fn goto(&mut self, pos: isize) {
         if pos < self.pos {
@@ -90,6 +72,26 @@ impl<'a> PosTracker<'a> {
             }
         }
         self.pos = pos;
+    }
+
+    fn set_i32(&mut self, cell: &mut Single, value: i32) {
+        self.goto(cell.pos);
+        if value > 0 {
+            self.output.data += &"+".repeat(value.try_into().unwrap());
+        } else if value < 0 {
+            self.output.data += &"-".repeat((-value).try_into().unwrap());
+        }
+        if value != 0 {
+            cell.is_zero = false;
+        }
+    }
+
+    fn set_u8(&mut self, cell: &mut Single, value: u8) {
+        self.goto(cell.pos);
+        self.output.data += &"+".repeat(value.try_into().unwrap());
+        if value != 0 {
+            cell.is_zero = false;
+        }
     }
 }
 
@@ -121,14 +123,13 @@ fn stmt_let(
 
             match size {
                 None => {
-                    let single = local.inner.as_single().unwrap();
+                    let mut single = local.inner.as_single().unwrap();
                     match value {
                         None => {
                             // no initializer and value is already zeroed
                         }
                         Some(Literal::Int(value)) => {
-                            tracker.goto(single.pos);
-                            tracker.output.set_current_signed(value);
+                            tracker.set_i32(&mut single, value);
                         }
                         Some(Literal::IntArray(_)) => {
                             return Err(EmitError::InitializedScalarFromIntArray)
@@ -137,8 +138,7 @@ fn stmt_let(
                             let mut b = str.bytes();
                             match (b.next(), b.next()) {
                                 (Some(value), None) => {
-                                    tracker.goto(single.pos);
-                                    tracker.output.set_current_unsigned(value);
+                                    tracker.set_u8(&mut single, value);
                                 }
                                 (None, _) => {
                                     return Err(EmitError::InitializedScalarFromEmptyString)
@@ -166,8 +166,7 @@ fn stmt_let(
                                 );
                             }
                             for (index, el) in ints.iter().enumerate() {
-                                tracker.goto(array[index].pos);
-                                tracker.output.set_current_signed(*el);
+                                tracker.set_i32(&mut array[index], *el);
                             }
                         }
                         Some(Literal::Str(ref str)) => {
@@ -175,15 +174,12 @@ fn stmt_let(
                                 return Err(EmitError::InitializedArrayFromIncorrectlySizedString);
                             }
                             for (index, byte) in str.bytes().enumerate() {
-                                tracker.goto(array[index].pos);
-                                tracker.output.set_current_unsigned(byte);
+                                tracker.set_u8(&mut array[index], byte);
                             }
                         }
                     }
                 }
             }
-
-            Ok(())
         }
         Binding::Destructured {
             els,
@@ -221,8 +217,7 @@ fn stmt_let(
 
                     for (index, value) in arr.into_iter().enumerate() {
                         if !els[index].is_ignored() {
-                            tracker.goto(array[index].0.pos);
-                            tracker.output.set_current_signed(value);
+                            tracker.set_i32(&mut array[index].0, value);
                             array[index].1 = true;
                         }
                     }
@@ -234,23 +229,21 @@ fn stmt_let(
 
                     for (index, value) in str.bytes().enumerate() {
                         if !els[index].is_ignored() {
-                            tracker.goto(array[index].0.pos);
-                            tracker.output.set_current_unsigned(value);
+                            tracker.set_u8(&mut array[index].0, value);
                             array[index].1 = true;
                         }
                     }
                 }
             }
 
-            for (index, el) in array.into_iter().enumerate() {
+            for (index, mut el) in array.into_iter().enumerate() {
                 let BindingInDestructure::Named { name, default } = &els[index] else {
                     continue;
                 };
 
                 if !el.1 {
                     if let Some(value) = default {
-                        tracker.goto(el.0.pos);
-                        tracker.output.set_current_signed(*value);
+                        tracker.set_i32(&mut el.0, *value);
                     }
                 }
 
@@ -262,10 +255,10 @@ fn stmt_let(
                     *name,
                 );
             }
-
-            todo!()
         }
     }
+
+    Ok(())
 }
 
 impl<'a> Scope<'a> {
@@ -282,7 +275,7 @@ impl<'a> Scope<'a> {
 }
 
 impl LocalInner {
-    fn as_single(&self) -> Option<&Single> {
+    fn as_single(&mut self) -> Option<&mut Single> {
         if let Self::Single(v) = self {
             Some(v)
         } else {
@@ -290,7 +283,7 @@ impl LocalInner {
         }
     }
 
-    fn as_array(&self) -> Option<&Vec<Single>> {
+    fn as_array(&mut self) -> Option<&mut Vec<Single>> {
         if let Self::Array(v) = self {
             Some(v)
         } else {
@@ -300,14 +293,13 @@ impl LocalInner {
 }
 
 mod locals {
+    use crate::rcr::{
+        emit::{Local, LocalInner, Single},
+        syntax::Name,
+    };
     use std::collections::{hash_map::Entry, HashMap};
 
-    use crate::rcr::{
-        emit::{EmitError, Local, LocalInner, PosTracker, Result, Single},
-        syntax::{Binding, BindingInDestructure, Let, Literal, Name, Size},
-    };
-
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, Default)]
     pub struct Locals {
         locals: HashMap<Name, Local>,
         /// local which are now inaccessible due to having their names overriden
@@ -382,4 +374,40 @@ mod locals {
                 .collect()
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn test() {
+    use crate::rcr::syntax::Name;
+
+    let mut output = Output::default();
+    let mut tracker = PosTracker {
+        output: &mut output,
+        pos: 0,
+    };
+    let mut locals = Locals::default();
+
+    let l = Let {
+        mutable: true,
+        binding: Binding::Destructured {
+            els: vec![
+                BindingInDestructure::Ignored,
+                BindingInDestructure::Named {
+                    name: Name(2),
+                    default: None,
+                },
+                BindingInDestructure::Named {
+                    name: Name(3),
+                    default: Some(34),
+                },
+            ],
+            accept_inexact: false,
+        },
+        value: None,
+    };
+
+    stmt_let(&mut tracker, &mut locals, l).unwrap();
+
+    println!("{locals:#?}");
 }

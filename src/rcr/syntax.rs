@@ -3,7 +3,7 @@ use pest_derive::Parser;
 use std::{collections::HashMap, fmt};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub struct Name(u32);
+pub struct Name(pub(super) u32);
 
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
