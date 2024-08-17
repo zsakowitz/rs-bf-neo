@@ -136,10 +136,17 @@ pub enum Size {
 #[non_exhaustive]
 pub enum BindingInDestructure {
     Ignored,
-    Named {
-        name: Name,
-        default: Option<Literal>,
-    },
+    Named { name: Name, default: Option<i32> },
+}
+
+impl BindingInDestructure {
+    /// Returns `true` if the binding in destructure is [`Ignored`].
+    ///
+    /// [`Ignored`]: BindingInDestructure::Ignored
+    #[must_use]
+    pub fn is_ignored(&self) -> bool {
+        matches!(self, Self::Ignored)
+    }
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -473,7 +480,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                                 let mut inner = x.into_inner();
                                 BindingInDestructure::Named {
                                     name: names.get(inner.next().unwrap().as_str()),
-                                    default: inner.next().map(parse_literal),
+                                    default: inner.next().map(|x| x.as_str().parse().unwrap()),
                                 }
                             }
                             None => BindingInDestructure::Ignored,
