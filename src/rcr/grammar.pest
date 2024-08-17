@@ -42,10 +42,9 @@ offset = @{ ("<" | ">") ~ uint? }
 target_expr_one   = { "(" ~ stmt_any ~ ")" }
 target_expr_block = { block_no_semi }
 
-str           = @{ "\"" ~ char_dq* ~ "\"" }
-literal_one   = _{ int | str }
-literal_array =  { "[" ~ literal_one* ~ "]" }
-literal       = _{ literal_one | literal_array }
+str       = @{ "\"" ~ char_dq* ~ "\"" }
+int_array =  { "[" ~ int* ~ "]" }
+literal   = _{ int | str | int_array }
 
 target_name     =  { name }
 target_array    =  { "[" ~ (target*) ~ "]" }

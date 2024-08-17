@@ -1,8 +1,5 @@
-mod emit;
-mod syntax;
-
-pub use emit::*;
-pub use syntax::*;
+pub mod emit;
+pub mod syntax;
 
 // enum RcrTarget {
 //     Retval(usize),

@@ -2,7 +2,7 @@ use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::{collections::HashMap, fmt};
 
-#[derive(Copy, Clone, Hash)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Name(u32);
 
 impl fmt::Debug for Name {
@@ -25,15 +25,10 @@ impl fmt::Debug for Offset {
 }
 
 #[derive(Clone, Debug, Hash)]
-pub enum LiteralSingle {
+pub enum Literal {
     Int(i32),
     Str(String),
-}
-
-#[derive(Clone, Debug, Hash)]
-pub enum Literal {
-    Single(LiteralSingle),
-    Array(Vec<LiteralSingle>),
+    IntArray(Vec<i32>),
 }
 
 /// Instead of traditional expressions, everything in this language is a target.
@@ -129,14 +124,17 @@ impl fmt::Debug for BuiltinName {
     }
 }
 
-/// if None, it is not an array
-/// if Some(None), an auto-sized array
-/// if Some(Some(size)), an array of size `size`
-pub type ArraySize = Option<Option<usize>>;
+#[derive(Copy, Clone, Debug, Hash)]
+pub enum Size {
+    /// a non-array value
+    Scalar,
+    /// an array value with a possibly-inferred size
+    Array(Option<usize>),
+}
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
-pub enum LetBindingInDestructure {
+pub enum BindingInDestructure {
     Ignored,
     Named {
         name: Name,
@@ -146,13 +144,13 @@ pub enum LetBindingInDestructure {
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
-pub enum LetBinding {
+pub enum Binding {
     Standard {
         name: Name,
-        size: ArraySize,
+        size: Size,
     },
     Destructured {
-        els: Vec<LetBindingInDestructure>,
+        els: Vec<BindingInDestructure>,
         accept_inexact: bool,
     },
 }
@@ -174,37 +172,52 @@ impl fmt::Debug for FnName {
 }
 
 #[derive(Clone, Debug, Hash)]
+/// declares a variable
+pub struct Let {
+    pub mutable: bool,
+    pub binding: Binding,
+    pub value: Option<Literal>,
+}
+
+#[derive(Clone, Debug, Hash)]
+/// runs the given code for each target of an array
+pub struct For {
+    pub mutable: bool,
+    pub bound: Name,
+    pub array: Target,
+    pub body: Script,
+}
+
+#[derive(Clone, Debug, Hash)]
+/// runs the given code while `target` is nonzero
+pub struct While {
+    pub target: Target,
+    pub body: Script,
+}
+
+#[derive(Clone, Debug, Hash)]
+/// calls a function
+pub struct Call {
+    pub name: FnName,
+    pub is_unsafe: bool,
+    pub args: Vec<Option<Target>>,
+    pub rest: Option<Target>,
+}
+
+#[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub enum Statement {
-    /// declares a variable
-    Let {
-        binding: LetBinding,
-        mutable: bool,
-        value: Option<Literal>,
-    },
-    /// runs the given code for each target of an array
-    For {
-        mutable: bool,
-        bound: Name,
-        array: Target,
-        body: Script,
-    },
-    /// runs the given code while `target` is nonzero
-    While { target: Target, body: Script },
-    /// calls a function
-    Call {
-        name: FnName,
-        is_unsafe: bool,
-        args: Vec<Option<Target>>,
-        rest: Option<Target>,
-    },
+    Let(Let),
+    For(For),
+    While(While),
+    Call(Call),
 }
 
 #[derive(Clone, Debug, Hash)]
 #[non_exhaustive]
 pub struct FnParam {
     pub(super) mutable: bool,
-    pub(super) binding: LetBinding,
+    pub(super) binding: Binding,
     pub(super) default: Option<Literal>,
 }
 
@@ -290,20 +303,15 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
     fn parse_literal(pair: Pair<Rule>) -> Literal {
         return match pair.as_rule() {
-            Rule::literal_one => Literal::Single(parse_literal_one(pair)),
-            Rule::literal_array => {
-                Literal::Array(pair.into_inner().map(|x| parse_literal_one(x)).collect())
-            }
+            Rule::int => Literal::Int(pair.as_str().parse().unwrap()),
+            Rule::str => Literal::Str(parse_str(pair)),
+            Rule::int_array => Literal::IntArray(
+                pair.into_inner()
+                    .map(|x| x.as_str().parse().unwrap())
+                    .collect(),
+            ),
             _ => unreachable!(),
         };
-
-        fn parse_literal_one(pair: Pair<Rule>) -> LiteralSingle {
-            match pair.as_rule() {
-                Rule::int => LiteralSingle::Int(pair.as_str().parse().unwrap()),
-                Rule::str => LiteralSingle::Str(parse_str(pair)),
-                _ => unreachable!(),
-            }
-        }
     }
 
     /// Expects a `Rule::target` to be passed.
@@ -367,7 +375,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     .into_inner()
                     .next()
                     .map(|x| parse_target(names, x));
-                Statement::Call {
+                Statement::Call(Call {
                     name: match fn_name {
                         "inc" => FnName::Builtin(BuiltinName::Inc),
                         "dec" => FnName::Builtin(BuiltinName::Dec),
@@ -379,7 +387,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     is_unsafe,
                     args,
                     rest,
-                }
+                })
             }
             Rule::stmt_for => {
                 let mut inner = pair.into_inner();
@@ -389,22 +397,22 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 inner.next().unwrap();
                 let target = inner.next().unwrap();
                 let block = inner.next().unwrap();
-                Statement::For {
+                Statement::For(For {
                     mutable,
                     bound: names.get(name.as_str()),
                     array: parse_target(names, target),
                     body: parse_script(names, block),
-                }
+                })
             }
             Rule::stmt_while => {
                 let mut inner = pair.into_inner();
                 inner.next().unwrap();
                 let target = inner.next().unwrap();
                 let block = inner.next().unwrap();
-                Statement::While {
+                Statement::While(While {
                     target: parse_target(names, target),
                     body: parse_script(names, block),
-                }
+                })
             }
             Rule::stmt_let => {
                 let mut inner = pair.into_inner();
@@ -413,11 +421,11 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let let_bindable = inner.next().unwrap();
                 let let_init = inner.next();
 
-                Statement::Let {
+                Statement::Let(Let {
                     mutable,
                     binding: parse_let_bindable(names, let_bindable),
                     value: let_init.map(parse_literal),
-                }
+                })
             }
             _ => todo!(),
         }
@@ -440,32 +448,35 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
     }
 
     /// Expects a `Rule::let_dest` or `Rule::let_bind_standard` to be passed.
-    fn parse_let_bindable(names: &mut NameManager, pair: Pair<Rule>) -> LetBinding {
+    fn parse_let_bindable(names: &mut NameManager, pair: Pair<Rule>) -> Binding {
         match pair.as_rule() {
             Rule::let_bind_standard => {
                 let mut inner = pair.into_inner();
-                LetBinding::Standard {
+                Binding::Standard {
                     name: names.get(inner.next().unwrap().as_str()),
-                    size: inner
-                        .next()
-                        .map(|x| x.into_inner().next().map(|x| x.as_str().parse().unwrap())),
+                    size: match inner.next() {
+                        None => Size::Scalar,
+                        Some(x) => {
+                            Size::Array(x.into_inner().next().map(|x| x.as_str().parse().unwrap()))
+                        }
+                    },
                 }
             }
             Rule::let_dest => {
                 let mut inner = pair.into_inner();
                 let els = inner.next().unwrap().into_inner();
                 let accept_inexact = inner.next().is_some();
-                LetBinding::Destructured {
+                Binding::Destructured {
                     els: els
                         .map(|x| match x.into_inner().next() {
                             Some(x) => {
                                 let mut inner = x.into_inner();
-                                LetBindingInDestructure::Named {
+                                BindingInDestructure::Named {
                                     name: names.get(inner.next().unwrap().as_str()),
                                     default: inner.next().map(parse_literal),
                                 }
                             }
-                            None => LetBindingInDestructure::Ignored,
+                            None => BindingInDestructure::Ignored,
                         })
                         .collect(),
                     accept_inexact,
