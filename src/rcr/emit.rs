@@ -1,403 +1,125 @@
-use std::fmt::Debug;
+use alloc::*;
+use error::*;
+use output::*;
+use scope::*;
 
-use crate::rcr::{
-    emit::locals::Locals,
-    syntax::{Binding, BindingInDestructure, Let, Literal, Size},
-};
-
-use super::syntax::FnDeclaration;
-
-#[derive(Clone, Debug, Default)]
-struct Output {
-    data: String,
-}
-
-#[derive(Debug)]
-struct PosTracker<'a> {
-    output: &'a mut Output,
-    pos: isize,
-}
-
-#[derive(Copy, Clone, Debug)]
-struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    fns: &'a [FnDeclaration],
-}
-
-#[derive(Clone, Debug)]
-struct Single {
-    /// position relative to function call point
-    pos: isize,
-    /// whether this local is definitely zero
-    ///
-    /// if false, the local may be zero, or it may be something else
-    is_zero: bool,
-}
-
-#[derive(Clone, Debug)]
-enum LocalInner {
-    Single(Single),
-    Array(Vec<Single>),
-}
-
-#[derive(Clone, Debug)]
-struct Local {
-    inner: LocalInner,
-    mutable: bool,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum EmitError {
-    AutoSizedArrayIsMissingInitializer,
-    AutoSizedArrayIsInitializedWithScalar,
-    InitializedScalarFromIntArray,
-    InitializedScalarFromEmptyString,
-    InitializedScalarFromMultiByteString,
-    InitializedArrayFromInt,
-    InitializedArrayFromIncorrectlySizedIntArray,
-    InitializedArrayFromIncorrectlySizedString,
-}
-
-pub type Result<T> = std::result::Result<T, EmitError>;
-
-impl<'a> PosTracker<'a> {
-    fn goto(&mut self, pos: isize) {
-        if pos < self.pos {
-            for _ in pos..self.pos {
-                self.output.data += "<";
-            }
-        } else if pos > self.pos {
-            for _ in self.pos..pos {
-                self.output.data += ">";
-            }
-        }
-        self.pos = pos;
+mod output {
+    #[derive(Clone, Debug, Default)]
+    pub struct Output {
+        data: String,
+        pos: usize,
     }
 
-    fn set_i32(&mut self, cell: &mut Single, value: i32) {
-        self.goto(cell.pos);
-        if value > 0 {
-            self.output.data += &"+".repeat(value.try_into().unwrap());
-        } else if value < 0 {
-            self.output.data += &"-".repeat((-value).try_into().unwrap());
-        }
-        if value != 0 {
-            cell.is_zero = false;
-        }
-    }
-
-    fn set_u8(&mut self, cell: &mut Single, value: u8) {
-        self.goto(cell.pos);
-        self.output.data += &"+".repeat(value.try_into().unwrap());
-        if value != 0 {
-            cell.is_zero = false;
+    impl Output {
+        pub fn goto(&mut self, pos: usize) {
+            if pos < self.pos {
+                self.data += &"<".repeat(self.pos - pos);
+            } else {
+                self.data += &">".repeat(pos - self.pos);
+            }
+            self.pos = pos;
         }
     }
 }
 
-fn stmt_let(
-    tracker: &mut PosTracker,
-    locals: &mut Locals,
-    Let {
-        mutable,
-        binding,
-        value,
-    }: Let,
-) -> Result<()> {
-    match binding {
-        Binding::Standard { name, size } => {
-            let size = match size {
-                Size::Scalar => None,            // let a;
-                Size::Array(Some(x)) => Some(x), // let a[3];
-                Size::Array(None) => Some(match value {
-                    None => return Err(EmitError::AutoSizedArrayIsMissingInitializer), // let a[]
-                    Some(Literal::Int(_)) => {
-                        return Err(EmitError::AutoSizedArrayIsInitializedWithScalar);
-                    } // let a[] = 2;
-                    Some(Literal::IntArray(ref x)) => x.len(), // let a[] = [2 3];
-                    Some(Literal::Str(ref x)) => x.len(),      // let a[] = "hello world";
-                }),
-            };
+mod scope {
+    use std::collections::HashMap;
 
-            let local = locals.internal(mutable, Some(name), size);
+    use crate::rcr::syntax::{FnDeclaration, Name};
 
-            match size {
-                None => {
-                    let mut single = local.inner.as_single().unwrap();
-                    match value {
-                        None => {
-                            // no initializer and value is already zeroed
-                        }
-                        Some(Literal::Int(value)) => {
-                            tracker.set_i32(&mut single, value);
-                        }
-                        Some(Literal::IntArray(_)) => {
-                            return Err(EmitError::InitializedScalarFromIntArray)
-                        }
-                        Some(Literal::Str(ref str)) => {
-                            let mut b = str.bytes();
-                            match (b.next(), b.next()) {
-                                (Some(value), None) => {
-                                    tracker.set_u8(&mut single, value);
-                                }
-                                (None, _) => {
-                                    return Err(EmitError::InitializedScalarFromEmptyString)
-                                }
-                                (Some(_), Some(_)) => {
-                                    return Err(EmitError::InitializedScalarFromMultiByteString)
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(_) => {
-                    let array = local.inner.as_array().unwrap();
-                    match value {
-                        None => {
-                            // no initializer and value is already zeroed
-                        }
-                        Some(Literal::Int(_)) => {
-                            return Err(EmitError::InitializedArrayFromInt);
-                        }
-                        Some(Literal::IntArray(ref ints)) => {
-                            if ints.len() != array.len() {
-                                return Err(
-                                    EmitError::InitializedArrayFromIncorrectlySizedIntArray,
-                                );
-                            }
-                            for (index, el) in ints.iter().enumerate() {
-                                tracker.set_i32(&mut array[index], *el);
-                            }
-                        }
-                        Some(Literal::Str(ref str)) => {
-                            if str.len() != array.len() {
-                                return Err(EmitError::InitializedArrayFromIncorrectlySizedString);
-                            }
-                            for (index, byte) in str.bytes().enumerate() {
-                                tracker.set_u8(&mut array[index], byte);
-                            }
-                        }
-                    }
-                }
+    #[derive(Clone, Debug)]
+    pub struct Scope<'a> {
+        parent: Option<&'a Scope<'a>>,
+        fns: HashMap<Name, &'a FnDeclaration>,
+    }
+
+    impl<'a> Scope<'a> {
+        fn create_hash_map(slice: &'a [FnDeclaration]) -> HashMap<Name, &'a FnDeclaration> {
+            let mut fns = HashMap::new();
+            for el in slice {
+                fns.insert(el.name, el);
+            }
+            fns
+        }
+
+        pub fn new(fns: &'a [FnDeclaration]) -> Self {
+            Self {
+                parent: None,
+                fns: Self::create_hash_map(fns),
             }
         }
-        Binding::Destructured {
-            els,
-            accept_inexact,
-        } => {
-            let size = els.len();
 
-            let mut array: Vec<_> = locals
-                .internal_for_destructuring(size)
-                .into_iter()
-                // the value and whether it has been initialized
-                .map(|x| (x, false))
-                .collect();
-
-            match value {
-                None => {
-                    // everything is already zeroed, so do nothing
-                }
-                Some(Literal::Int(_)) => return Err(EmitError::InitializedArrayFromInt),
-                Some(Literal::IntArray(arr)) => {
-                    if !accept_inexact && arr.len() != els.len() {
-                        return Err(EmitError::InitializedArrayFromIncorrectlySizedIntArray);
-                    }
-
-                    for (index, value) in arr.into_iter().enumerate() {
-                        if els.get(index).map(|x| !x.is_ignored()).unwrap_or_default() {
-                            tracker.set_i32(&mut array[index].0, value);
-                            array[index].1 = true;
-                        }
-                    }
-                }
-                Some(Literal::Str(str)) => {
-                    if !accept_inexact && str.len() != els.len() {
-                        return Err(EmitError::InitializedArrayFromIncorrectlySizedString);
-                    }
-
-                    for (index, value) in str.bytes().enumerate() {
-                        if els.get(index).map(|x| !x.is_ignored()).unwrap_or_default() {
-                            tracker.set_u8(&mut array[index].0, value);
-                            array[index].1 = true;
-                        }
-                    }
-                }
+        pub fn child(&'a self, next: &'a [FnDeclaration]) -> Self {
+            Self {
+                parent: Some(self),
+                fns: Self::create_hash_map(next),
             }
+        }
 
-            for (index, mut el) in array.into_iter().enumerate() {
-                let BindingInDestructure::Named { name, default } = &els[index] else {
-                    continue;
-                };
-
-                if !el.1 {
-                    if let Some(value) = default {
-                        tracker.set_i32(&mut el.0, *value);
-                    }
-                }
-
-                locals.save(
-                    Local {
-                        inner: LocalInner::Single(el.0),
-                        mutable,
+        pub fn get(&self, name: &Name) -> Option<&'a FnDeclaration> {
+            let mut this = self;
+            loop {
+                match this.fns.get(name) {
+                    Some(x) => return Some(*x),
+                    None => match this.parent {
+                        Some(x) => this = x,
+                        None => return None,
                     },
-                    *name,
-                );
+                }
             }
         }
     }
-
-    Ok(())
 }
 
-impl<'a> Scope<'a> {
-    fn new(fns: &'a [FnDeclaration]) -> Self {
-        Self { parent: None, fns }
-    }
+mod alloc {
+    use std::collections::HashMap;
 
-    fn child(&'a self, fns: &'a [FnDeclaration]) -> Scope {
-        Scope {
-            parent: Some(self),
-            fns,
-        }
-    }
-}
-
-impl LocalInner {
-    fn as_single(&mut self) -> Option<&mut Single> {
-        if let Self::Single(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    fn as_array(&mut self) -> Option<&mut Vec<Single>> {
-        if let Self::Array(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-}
-
-mod locals {
-    use crate::rcr::{
-        emit::{Local, LocalInner, Single},
-        syntax::Name,
+    use crate::{
+        builder::CellState,
+        rcr::{
+            emit::{Output, Result},
+            syntax::{Kind, Let, Literal, Name},
+        },
     };
-    use std::collections::{hash_map::Entry, HashMap};
+
+    #[derive(Clone, Debug)]
+    pub enum Content {
+        Single(usize),
+        Array(Vec<usize>),
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Local {
+        content: Content,
+        mutable: bool,
+    }
 
     #[derive(Clone, Debug, Default)]
     pub struct Locals {
-        locals: HashMap<Name, Local>,
-        /// local which are now inaccessible due to having their names overriden
-        inaccessible: Vec<Local>,
-        next: isize,
+        states: HashMap<usize, CellState>,
+        named: HashMap<Name, Local>,
+        unnamed: Vec<Local>,
+        next: usize,
     }
 
-    impl Locals {
-        pub fn save(&mut self, local: Local, name: Name) -> &mut Local {
-            match self.locals.entry(name) {
-                Entry::Occupied(mut entry) => {
-                    let old = entry.insert(local);
-                    self.inaccessible.push(old);
-                    entry.into_mut()
-                }
-                Entry::Vacant(entry) => entry.insert(local),
-            }
-        }
-
-        /// Creates a local with the given mutability, name, and size.
-        ///
-        /// If `name` is [`None`], the local is created but is unnamed and inaccessible.
-        ///
-        /// If `size` is [`None`], the local is a cell. Otherwise, it is an array of cells.
-        pub fn internal(
-            &mut self,
-            mutable: bool,
-            name: Option<Name>,
-            size: Option<usize>,
-        ) -> &mut Local {
-            let next = self.next;
-            let isize = size
-                .map(|x| isize::try_from(x).expect("the size fits into an `isize`"))
-                .unwrap_or(1);
-            self.next += isize;
-            let local = Local {
-                inner: match size {
-                    Some(_) => LocalInner::Array(
-                        (0..isize)
-                            .map(|x| Single {
-                                pos: next + x,
-                                is_zero: true,
-                            })
-                            .collect(),
-                    ),
-                    None => LocalInner::Single(Single {
-                        pos: next,
-                        is_zero: true,
-                    }),
-                },
-                mutable,
-            };
-            match name {
-                Some(name) => self.save(local, name),
-                None => {
-                    self.inaccessible.push(local);
-                    self.inaccessible.last_mut().expect("we just pushed it")
-                }
-            }
-        }
-
-        /// Creates an array of locals with the given size.
-        pub fn internal_for_destructuring(&mut self, size: usize) -> Vec<Single> {
-            let next = self.next;
-            let isize = isize::try_from(size).expect("the size fits into an `isize`");
-            self.next += isize;
-            (0..isize)
-                .map(|x| Single {
-                    pos: next + x,
-                    is_zero: true,
-                })
-                .collect()
+    impl Content {
+        fn create(output: &mut Output, kind: Kind, value: Option<Literal>) -> Result<Self> {
+            let memory_needed = match kind {};
         }
     }
 }
 
-#[cfg(test)]
-#[test]
-fn test() {
-    use crate::rcr::syntax::Name;
+mod error {
+    #[derive(Clone, Debug)]
+    pub enum Error {}
 
-    let mut output = Output::default();
-    let mut tracker = PosTracker {
-        output: &mut output,
-        pos: 0,
-    };
-    let mut locals = Locals::default();
+    pub type Result<T> = std::result::Result<T, Error>;
 
-    let l = Let {
-        mutable: true,
-        binding: Binding::Destructured {
-            els: vec![
-                BindingInDestructure::Ignored,
-                BindingInDestructure::Named {
-                    name: Name(2),
-                    default: None,
-                },
-                BindingInDestructure::Named {
-                    name: Name(3),
-                    default: Some(34),
-                },
-            ],
-            accept_inexact: true,
-        },
-        value: Some(Literal::Str("Hello world".to_string())),
-    };
+    macro_rules! e {
+        ($x:ident) => {
+            return Error::$x
+        };
+    }
 
-    stmt_let(&mut tracker, &mut locals, l).unwrap();
-
-    println!("{locals:#?}");
-    println!("{output:?}");
+    pub(super) use e;
 }

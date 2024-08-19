@@ -125,11 +125,18 @@ impl fmt::Debug for BuiltinName {
 }
 
 #[derive(Copy, Clone, Debug, Hash)]
-pub enum Size {
+pub enum Kind {
     /// a non-array value
     Scalar,
-    /// an array value with a possibly-inferred size
-    Array(Option<usize>),
+    /// an array value
+    Array(Size),
+}
+
+#[derive(Copy, Clone, Debug, Hash)]
+pub enum Size {
+    Inferred,
+    Exact(usize),
+    AtLeast(usize),
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -154,7 +161,7 @@ impl BindingInDestructure {
 pub enum Binding {
     Standard {
         name: Name,
-        size: Size,
+        kind: Kind,
     },
     Destructured {
         els: Vec<BindingInDestructure>,
@@ -461,10 +468,13 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let mut inner = pair.into_inner();
                 Binding::Standard {
                     name: names.get(inner.next().unwrap().as_str()),
-                    size: match inner.next() {
-                        None => Size::Scalar,
+                    kind: match inner.next() {
+                        None => Kind::Scalar,
                         Some(x) => {
-                            Size::Array(x.into_inner().next().map(|x| x.as_str().parse().unwrap()))
+                            match x.into_inner().next().map(|x| x.as_str().parse().unwrap()) {
+                                Some(x) => Kind::Array(Size::Exact(x)),
+                                None => Kind::Array(Size::Inferred),
+                            }
                         }
                     },
                 }
