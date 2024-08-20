@@ -5,7 +5,7 @@ use std::{
 
 use crate::program::{CompileError, Program};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CellState {
     #[default]
     Zeroed,

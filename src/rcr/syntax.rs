@@ -2,6 +2,8 @@ use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::{collections::HashMap, fmt};
 
+use crate::builder::CellState;
+
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Name(pub(super) u32);
 
@@ -106,17 +108,25 @@ pub struct Script {
 
 #[derive(Copy, Clone, Hash)]
 #[non_exhaustive]
-pub enum BuiltinName {
+pub enum Builtin {
     Inc,
     Dec,
     Read,
     Write,
     Goto,
-    AssertIsZero,
-    AssertIsUnknown,
+    Assert(CellState),
 }
 
-impl fmt::Debug for BuiltinName {
+impl Builtin {
+    pub fn mutates(self) -> bool {
+        match self {
+            Self::Assert(_) | Self::Goto => false,
+            Self::Dec | Self::Inc | Self::Read | Self::Write => true,
+        }
+    }
+}
+
+impl fmt::Debug for Builtin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -127,8 +137,8 @@ impl fmt::Debug for BuiltinName {
                 Self::Read => "read",
                 Self::Write => "write",
                 Self::Goto => "goto",
-                Self::AssertIsZero => "assert::is_zero",
-                Self::AssertIsUnknown => "assert::is_unknown",
+                Self::Assert(CellState::Zeroed) => "assert::is_zero",
+                Self::Assert(CellState::Unknown) => "assert::is_unknown",
             }
         )
     }
@@ -180,7 +190,7 @@ pub enum Binding {
 #[derive(Copy, Clone, Hash)]
 #[non_exhaustive]
 pub enum FnName {
-    Builtin(BuiltinName),
+    Builtin(Builtin),
     UserDefined(Name),
 }
 
@@ -266,7 +276,7 @@ pub struct FnDeclaration {
 #[grammar = "rcr/grammar.pest"] // relative to src
 struct MyParser;
 
-struct NameManager {
+pub struct NameManager {
     data: HashMap<String, Name>,
     next: u32,
 }
@@ -279,7 +289,11 @@ impl NameManager {
         }
     }
 
-    fn get(&mut self, name: &str) -> Name {
+    pub fn get(&self, name: &str) -> Option<Name> {
+        self.data.get(name).copied()
+    }
+
+    pub fn get_or_create(&mut self, name: &str) -> Name {
         if let Some(x) = self.data.get(name) {
             return *x;
         }
@@ -289,17 +303,24 @@ impl NameManager {
     }
 }
 
-pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
+pub struct Parse {
+    pub fns: Vec<FnDeclaration>,
+    pub names: NameManager,
+}
+
+pub fn parse(input: &str) -> Result<Parse, Error<Rule>> {
     let pair = MyParser::parse(Rule::main, input)?
         .next()
         .unwrap()
         .into_inner();
     let mut names = NameManager::new();
 
-    return Ok(pair
+    let fns = pair
         .filter(|x| x.as_rule() == Rule::r#fn)
         .map(|x| parse_fn(&mut names, x))
-        .collect());
+        .collect();
+
+    return Ok(Parse { fns, names });
 
     fn parse_offset(s: &str) -> Offset {
         let direction = match s {
@@ -352,7 +373,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 Rule::target_array => {
                     TargetInner::Array(pair.into_inner().map(|x| parse_target(names, x)).collect())
                 }
-                Rule::target_name => TargetInner::Local(names.get(pair.as_str())),
+                Rule::target_name => TargetInner::Local(names.get_or_create(pair.as_str())),
                 Rule::target_relative => TargetInner::Relative(parse_offset(pair.as_str())),
                 Rule::int => TargetInner::Int(pair.as_str().parse().unwrap()),
                 Rule::str => TargetInner::Str(parse_str(pair)),
@@ -399,12 +420,16 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                     .map(|x| parse_target(names, x));
                 Statement::Call(Call {
                     name: match fn_name {
-                        "inc" => FnName::Builtin(BuiltinName::Inc),
-                        "dec" => FnName::Builtin(BuiltinName::Dec),
-                        "read" => FnName::Builtin(BuiltinName::Read),
-                        "write" => FnName::Builtin(BuiltinName::Write),
-                        "goto" => FnName::Builtin(BuiltinName::Goto),
-                        _ => FnName::UserDefined(names.get(fn_name)),
+                        "inc" => FnName::Builtin(Builtin::Inc),
+                        "dec" => FnName::Builtin(Builtin::Dec),
+                        "read" => FnName::Builtin(Builtin::Read),
+                        "write" => FnName::Builtin(Builtin::Write),
+                        "goto" => FnName::Builtin(Builtin::Goto),
+                        "assert::is_zero" => FnName::Builtin(Builtin::Assert(CellState::Zeroed)),
+                        "assert::is_unknown" => {
+                            FnName::Builtin(Builtin::Assert(CellState::Unknown))
+                        }
+                        _ => FnName::UserDefined(names.get_or_create(fn_name)),
                     },
                     is_unsafe,
                     args,
@@ -421,7 +446,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let block = inner.next().unwrap();
                 Statement::For(For {
                     mutable,
-                    bound: names.get(name.as_str()),
+                    bound: names.get_or_create(name.as_str()),
                     array: parse_target(names, target),
                     body: parse_script(names, block),
                 })
@@ -475,7 +500,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
             Rule::let_bind_standard => {
                 let mut inner = pair.into_inner();
                 Binding::Standard {
-                    name: names.get(inner.next().unwrap().as_str()),
+                    name: names.get_or_create(inner.next().unwrap().as_str()),
                     kind: match inner.next() {
                         None => Kind::Scalar,
                         Some(x) => {
@@ -497,7 +522,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                             Some(x) => {
                                 let mut inner = x.into_inner();
                                 BindingInDestructure::Named {
-                                    name: names.get(inner.next().unwrap().as_str()),
+                                    name: names.get_or_create(inner.next().unwrap().as_str()),
                                     default: inner.next().map(|x| x.as_str().parse().unwrap()),
                                 }
                             }
@@ -517,7 +542,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
 
         let mut inner = pair.into_inner();
         inner.next().unwrap(); // fn keyword
-        let name = names.get(inner.next().unwrap().as_str());
+        let name = names.get_or_create(inner.next().unwrap().as_str());
         let mut fn_args = inner.next().unwrap().into_inner();
         let (args, rest) = match (fn_args.next(), fn_args.next()) {
             (None, _) => (None, None),
@@ -555,7 +580,7 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                 let mut inner = x.into_inner();
                 FnRestParam {
                     mutable: inner.next().unwrap().into_inner().next().is_some(),
-                    name: names.get(inner.next().unwrap().as_str()),
+                    name: names.get_or_create(inner.next().unwrap().as_str()),
                 }
             }),
             returns,
