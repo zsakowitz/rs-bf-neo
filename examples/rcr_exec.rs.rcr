@@ -1,0 +1,9 @@
+fn main() {
+  let mut [a b];
+  inc a;
+  inc b;
+  inc a;
+  // inc [a b];
+  inc a a a;
+  write a;
+}

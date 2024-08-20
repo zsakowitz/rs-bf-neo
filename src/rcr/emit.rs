@@ -5,7 +5,7 @@ use crate::rcr::{
         output::Output,
         scope::Scope,
     },
-    syntax::{Builtin, Call, FnName, Parse, Script, Statement, Target},
+    syntax::{Builtin, Call, FnName, ParseTree, Script, Statement, Target, TargetInner},
 };
 
 mod output {
@@ -77,6 +77,10 @@ mod output {
         pub fn write_current(&mut self) {
             self.data += ".";
         }
+
+        pub fn into_data(self) -> String {
+            self.data
+        }
     }
 }
 
@@ -142,7 +146,7 @@ mod alloc {
         builder::CellState,
         rcr::syntax::{ArraySize, Binding, BindingInDestructure, Kind, Let, Literal, Name},
     };
-    use std::ops::RangeFrom;
+    use std::ops::{Index, RangeFrom};
     use std::{
         cmp::max,
         collections::{hash_map::Entry, HashMap},
@@ -174,6 +178,19 @@ mod alloc {
     }
 
     impl Local {
+        pub fn index(&self, index: usize) -> Result<Local> {
+            match &self.content {
+                Content::Array(x) => match x.get(index) {
+                    Some(x) => Ok(Local {
+                        content: Content::Single(*x),
+                        mutable: self.mutable,
+                    }),
+                    None => e!(IndexOutOfBounds),
+                },
+                Content::Single(_) => e!(IndexedIntoSingle),
+            }
+        }
+
         pub fn assert_mutability(&self, needs_mutability: bool) -> Result<&Content> {
             if needs_mutability && !self.mutable {
                 e!(CannotMutateImmutableVariable)
@@ -219,6 +236,10 @@ mod alloc {
     }
 
     impl Locals {
+        pub fn get(&self, name: Name) -> Option<&Local> {
+            self.named.get(&name)
+        }
+
         fn set(&mut self, name: Name, local: Local) -> &Local {
             match self.named.entry(name) {
                 Entry::Occupied(entry) => {
@@ -600,6 +621,33 @@ mod error {
         /// }
         /// ```
         NoDefaultValue,
+        /// A local does not exist with the given name
+        ///
+        /// ```
+        /// fn main() {
+        ///   let a = 23;
+        ///   inc c;
+        /// }
+        /// ```
+        LocalDoesNotExist,
+        /// Cannot index into a single
+        ///
+        /// ```
+        /// fn main() {
+        ///   let a = 23;
+        ///   inc a.3;
+        /// }
+        /// ```
+        IndexedIntoSingle,
+        /// Attempted to index outside of an array's bounds
+        ///
+        /// ```
+        /// fn main() {
+        ///   let a[] = [2 4];
+        ///   inc a.3;
+        /// }
+        /// ```
+        IndexOutOfBounds,
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
@@ -679,7 +727,18 @@ fn stmt_call(state: &mut State, stmt: &Call) -> Result<Option<Target>> {
 }
 
 fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
-    todo!()
+    let local = match target.inner {
+        TargetInner::Local(name) => match state.locals.get(name) {
+            Some(x) => x,
+            None => e!(LocalDoesNotExist),
+        },
+        _ => todo!(),
+    };
+
+    match target.index {
+        None => Ok(local.clone()),
+        Some(index) => local.index(index as usize),
+    }
 }
 
 fn exec(state: &mut State, stmts: &[Statement]) -> Result<()> {
@@ -706,7 +765,7 @@ fn exec(state: &mut State, stmts: &[Statement]) -> Result<()> {
     Ok(())
 }
 
-pub fn emit(parse: &Parse) -> Result<Output> {
+pub fn emit(parse: &ParseTree) -> Result<String> {
     let scope = Scope::new(&parse.fns)?;
 
     let Some(main) = &parse.names.get("main") else {
@@ -729,5 +788,5 @@ pub fn emit(parse: &Parse) -> Result<Output> {
         scope: scope.child(&main.body.fns)?,
     };
 
-    exec(&mut state, &main.body.stmts).map(|_| state.output)
+    exec(&mut state, &main.body.stmts).map(|_| state.output.into_data())
 }

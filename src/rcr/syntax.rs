@@ -276,6 +276,7 @@ pub struct FnDeclaration {
 #[grammar = "rcr/grammar.pest"] // relative to src
 struct MyParser;
 
+#[derive(Clone, Debug)]
 pub struct NameManager {
     data: HashMap<String, Name>,
     next: u32,
@@ -303,12 +304,13 @@ impl NameManager {
     }
 }
 
-pub struct Parse {
+#[derive(Clone, Debug)]
+pub struct ParseTree {
     pub fns: Vec<FnDeclaration>,
     pub names: NameManager,
 }
 
-pub fn parse(input: &str) -> Result<Parse, Error<Rule>> {
+pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
     let pair = MyParser::parse(Rule::main, input)?
         .next()
         .unwrap()
@@ -320,7 +322,7 @@ pub fn parse(input: &str) -> Result<Parse, Error<Rule>> {
         .map(|x| parse_fn(&mut names, x))
         .collect();
 
-    return Ok(Parse { fns, names });
+    return Ok(ParseTree { fns, names });
 
     fn parse_offset(s: &str) -> Offset {
         let direction = match s {
