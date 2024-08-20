@@ -31,6 +31,16 @@ pub enum Literal {
     IntArray(Vec<i32>),
 }
 
+impl Literal {
+    pub fn memory_needed(&self) -> usize {
+        match self {
+            Self::Int(_) => 1,
+            Self::Str(x) => x.len(),
+            Self::IntArray(x) => x.len(),
+        }
+    }
+}
+
 /// Instead of traditional expressions, everything in this language is a target.
 /// All targets listed here, then, are just references to specific cells once
 /// compiled away.
@@ -126,14 +136,12 @@ impl fmt::Debug for BuiltinName {
 
 #[derive(Copy, Clone, Debug, Hash)]
 pub enum Kind {
-    /// a non-array value
     Scalar,
-    /// an array value
-    Array(Size),
+    Array(ArraySize),
 }
 
 #[derive(Copy, Clone, Debug, Hash)]
-pub enum Size {
+pub enum ArraySize {
     Inferred,
     Exact(usize),
     AtLeast(usize),
@@ -472,8 +480,8 @@ pub fn parse(input: &str) -> Result<Vec<FnDeclaration>, Error<Rule>> {
                         None => Kind::Scalar,
                         Some(x) => {
                             match x.into_inner().next().map(|x| x.as_str().parse().unwrap()) {
-                                Some(x) => Kind::Array(Size::Exact(x)),
-                                None => Kind::Array(Size::Inferred),
+                                Some(x) => Kind::Array(ArraySize::Exact(x)),
+                                None => Kind::Array(ArraySize::Inferred),
                             }
                         }
                     },
