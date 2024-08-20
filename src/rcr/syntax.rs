@@ -330,8 +330,14 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
             _ if s.starts_with(">") => 1,
             _ => -1,
         };
-        let size = s[1..].parse::<isize>().unwrap();
-        Offset(direction * size)
+        if s.bytes().all(|x| x == b'<') {
+            Offset(-(s.len() as isize))
+        } else if s.bytes().all(|x| x == b'>') {
+            Offset(s.len() as isize)
+        } else {
+            let size = s[1..].parse::<isize>().unwrap();
+            Offset(direction * size)
+        }
     }
 
     fn parse_str(pair: Pair<Rule>) -> String {

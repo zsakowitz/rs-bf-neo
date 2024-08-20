@@ -37,7 +37,7 @@ name        = @{ name_single ~ ("::" ~ name_single)* }
 escape_seq = @{ "\\" ~ ("\\" | "\"" | "n" | "r") }
 char_dq    = @{ (!("\\" | "\"" | NEWLINE) ~ ANY) | escape_seq }
 
-offset = @{ ("<" | ">") ~ uint? }
+offset = @{ ("<" | ">") ~ uint? | "<"+ | ">"+ }
 
 target_expr_one   = { "(" ~ stmt_any ~ ")" }
 target_expr_block = { block_no_semi }

@@ -1,6 +1,6 @@
 use crate::rcr::{
     emit::{
-        alloc::{stmt_let, Local, Locals, Memory},
+        alloc::{stmt_let, Content, Local, Locals, Memory},
         error::{e, Result},
         output::Output,
         scope::Scope,
@@ -9,10 +9,24 @@ use crate::rcr::{
 };
 
 mod output {
+    use crate::rcr::{
+        emit::error::{e, Result},
+        syntax::Offset,
+    };
+
     #[derive(Clone, Debug, Default)]
     pub struct Output {
         data: String,
         pos: usize,
+    }
+
+    impl Output {
+        pub fn pos_by_offset(&self, offset: Offset) -> Result<usize> {
+            match self.pos.checked_add_signed(offset.0) {
+                Some(x) => Ok(x),
+                None => e!(OffsetExitsTapeBounds),
+            }
+        }
     }
 
     pub trait Settable: Copy {
@@ -146,7 +160,8 @@ mod alloc {
         builder::CellState,
         rcr::syntax::{ArraySize, Binding, BindingInDestructure, Kind, Let, Literal, Name},
     };
-    use std::ops::{Index, RangeFrom};
+    use std::mem;
+    use std::ops::RangeFrom;
     use std::{
         cmp::max,
         collections::{hash_map::Entry, HashMap},
@@ -159,6 +174,40 @@ mod alloc {
     }
 
     impl Content {
+        pub fn create_single(
+            output: &mut Output,
+            memory: &mut Memory,
+            value: impl Settable,
+        ) -> Self {
+            let pos = memory.create_single();
+            init(output, memory, pos, value);
+            Content::Single(pos)
+        }
+
+        pub fn create_array(
+            output: &mut Output,
+            memory: &mut Memory,
+            value: &[impl Settable],
+        ) -> Self {
+            let pos = memory.len();
+            let size = value.len();
+            for _ in 0..size {
+                memory.create_single();
+            }
+            let pos: Vec<_> = (0..size).map(|x| pos + x).collect();
+            for (index, pos) in pos.iter().enumerate() {
+                init(output, memory, *pos, value[index]);
+            }
+            Content::Array(pos)
+        }
+
+        pub fn into_local(self, mutable: bool) -> Local {
+            Local {
+                content: self,
+                mutable,
+            }
+        }
+
         pub fn each(&self, mut f: impl FnMut(usize)) {
             match self {
                 Self::Single(x) => f(*x),
@@ -203,15 +252,36 @@ mod alloc {
     #[derive(Clone, Debug, Default)]
     pub struct Memory {
         cells: Vec<CellState>,
+        /// in a block of possibly executed code, this stores the state of any cell before it was
+        /// modified. if a cell is zero in both branches, it is zero after the possible execution.
+        /// if a cell is nonzero in either branch, it is nonzero after the possible execution.
+        previous: Option<HashMap<usize, CellState>>,
     }
 
     impl Memory {
+        fn create_single(&mut self) -> usize {
+            let pos = self.cells.len();
+            // if let Some(ref mut x) = self.previous {
+            //     x.entry(pos).or_insert(CellState::Zeroed);
+            // }
+            self.cells.push(CellState::Zeroed);
+            pos
+        }
+
+        fn set_state(&mut self, pos: usize, state: CellState) {
+            assert!(pos <= self.cells.len(), "pos exists in the map");
+            if let Some(ref mut x) = self.previous {
+                x.entry(pos).or_insert(self.cells[pos]);
+            }
+            self.cells[pos] = state;
+        }
+
         pub fn len(&self) -> usize {
             self.cells.len()
         }
 
         pub fn assert(&mut self, pos: usize, state: CellState) {
-            self.cells[pos] = state;
+            self.set_state(pos, state);
         }
 
         pub fn clear(&mut self, output: &mut Output, range: RangeFrom<usize>) {
@@ -226,6 +296,22 @@ mod alloc {
                     }
                 }
             }
+        }
+
+        fn possibly_executed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+            let prev_map = self.previous.replace(HashMap::new());
+            let result = f(self);
+            // we put it there so it should still exist
+            let this_map = mem::replace(&mut self.previous, prev_map).unwrap();
+            for (index, old_state) in this_map {
+                let new_state = self.cells.get(index).copied().unwrap_or(CellState::Zeroed);
+
+                self.cells[index] = match (old_state, new_state) {
+                    (CellState::Zeroed, CellState::Zeroed) => CellState::Zeroed,
+                    (_, _) => CellState::Unknown,
+                };
+            }
+            result
         }
     }
 
@@ -298,7 +384,7 @@ mod alloc {
         output.goto(pos);
         value.inc(output);
         if value.is_nonzero() {
-            memory.cells[pos] = CellState::Unknown;
+            memory.set_state(pos, CellState::Unknown);
         }
     }
 
@@ -320,7 +406,7 @@ mod alloc {
             }
 
             // only allocate memory after we've thrown all possible errors
-            memory.cells.push(CellState::Zeroed);
+            memory.create_single();
 
             Ok(content)
         }
@@ -352,7 +438,7 @@ mod alloc {
 
             // only allocate memory after we've thrown all possible errors
             for _ in 0..memory_needed {
-                memory.cells.push(CellState::Zeroed);
+                memory.create_single();
             }
 
             Ok(Content::Array(pos))
@@ -435,7 +521,7 @@ mod alloc {
 
             // only allocate memory after we've thrown all possible errors
             for _ in 0..memory_needed {
-                memory.cells.push(CellState::Zeroed);
+                memory.create_single();
             }
 
             Ok(pos)
@@ -648,6 +734,15 @@ mod error {
         /// }
         /// ```
         IndexOutOfBounds,
+        /// Offset targets cannot go beyond the edges of memory
+        ///
+        /// ```
+        /// fn main() {
+        ///   inc <<<;
+        ///   // what cell does this point to? it doesn't exist, and thus errors
+        /// }
+        /// ```
+        OffsetExitsTapeBounds,
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
@@ -729,14 +824,24 @@ fn stmt_call(state: &mut State, stmt: &Call) -> Result<Option<Target>> {
 fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
     let local = match target.inner {
         TargetInner::Local(name) => match state.locals.get(name) {
-            Some(x) => x,
+            Some(x) => x.clone(),
             None => e!(LocalDoesNotExist),
         },
+        TargetInner::Int(value) => {
+            Content::create_single(&mut state.output, &mut state.memory, value).into_local(true)
+        }
+        TargetInner::Str(ref value) => {
+            Content::create_array(&mut state.output, &mut state.memory, value.as_bytes())
+                .into_local(true)
+        }
+        TargetInner::Relative(offset) => {
+            Content::Single(state.output.pos_by_offset(offset)?).into_local(false)
+        }
         _ => todo!(),
     };
 
     match target.index {
-        None => Ok(local.clone()),
+        None => Ok(local),
         Some(index) => local.index(index as usize),
     }
 }
