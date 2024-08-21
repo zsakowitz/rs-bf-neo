@@ -1,4 +1,4 @@
-use rs_bf_neo::rcr::{emit::emit, syntax::parse};
+use rs_bf_neo::rcr::{emit, parse};
 
 fn main() {
     let tree = parse(include_str!("rcr_exec.rs.rcr")).unwrap();

@@ -172,6 +172,21 @@ impl BindingInDestructure {
     pub fn is_ignored(&self) -> bool {
         matches!(self, Self::Ignored)
     }
+
+    /// Returns `true` if the binding in destructure is [`Ignored`] or has a default value.
+    ///
+    /// [`Ignored`]: BindingInDestructure::Ignored
+    #[must_use]
+    pub fn ignored_or_default(&self) -> bool {
+        matches!(
+            self,
+            Self::Ignored
+                | Self::Named {
+                    default: Some(_),
+                    ..
+                }
+        )
+    }
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -250,7 +265,7 @@ pub enum Statement {
 pub struct FnParam {
     pub(super) mutable: bool,
     pub(super) binding: Binding,
-    pub(super) default: Option<Literal>,
+    pub(super) default: Option<Target>,
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -264,8 +279,8 @@ pub struct FnRestParam {
 #[non_exhaustive]
 pub struct FnDeclaration {
     pub(super) name: Name,
-    pub(super) args: Vec<FnParam>,
-    pub(super) rest: Option<FnRestParam>,
+    pub(super) params: Vec<FnParam>,
+    pub(super) param_rest: Option<FnRestParam>,
     /// `returns` specifies what a (...) expression containing this function
     /// call should target
     pub(super) returns: Option<Target>,
@@ -515,8 +530,13 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
                     kind: match inner.next() {
                         None => Kind::Scalar,
                         Some(x) => {
-                            match x.into_inner().next().map(|x| x.as_str().parse().unwrap()) {
-                                Some(x) => Kind::Array(ArraySize::Exact(x)),
+                            let mut inner = x.into_inner();
+                            match inner.next().map(|x| x.as_str().parse().unwrap()) {
+                                Some(x) => match inner.next().unwrap().as_str() {
+                                    ".." => Kind::Array(ArraySize::AtLeast(x)),
+                                    "" => Kind::Array(ArraySize::Exact(x)),
+                                    _ => unreachable!(),
+                                },
                                 None => Kind::Array(ArraySize::Inferred),
                             }
                         }
@@ -574,20 +594,20 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
 
         FnDeclaration {
             name,
-            args: args
+            params: args
                 .map(|x| {
                     x.map(|x| {
                         let mut inner = x.into_inner();
                         FnParam {
                             mutable: inner.next().unwrap().into_inner().next().is_some(),
                             binding: parse_let_bindable(names, inner.next().unwrap()),
-                            default: inner.next().map(parse_literal),
+                            default: inner.next().map(|x| parse_target(names, x)),
                         }
                     })
                     .collect()
                 })
                 .unwrap_or_default(),
-            rest: rest.map(|x| {
+            param_rest: rest.map(|x| {
                 let mut inner = x.into_inner();
                 FnRestParam {
                     mutable: inner.next().unwrap().into_inner().next().is_some(),

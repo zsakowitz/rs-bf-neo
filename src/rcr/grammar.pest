@@ -88,8 +88,9 @@ let_dest_els           = { let_dest_maybe_element* }
 let_dest_dots          = { "..." }
 let_dest               = { "[" ~ let_dest_els ~ let_dest_dots? ~ "]" }
 
-let_array_size =  { "[" ~ uint? ~ "]" }
-let_init       = _{ "=" ~ literal }
+let_array_size_dots =  { ".."? }
+let_array_size      =  { "[" ~ (uint ~ let_array_size_dots)? ~ "]" }
+let_init            = _{ "=" ~ literal }
 
 stmt_needs_semi        = _{ stmt_call | stmt_let }
 stmt_no_mandatory_semi = _{ stmt_while | stmt_for }
@@ -107,7 +108,7 @@ block         = _{ "{" ~ stmt_list_semi ~ "}" }
 block_no_semi = _{ "{" ~ stmt_list_no_semi ~ "}" }
 
 fn_arg_mut     = { keyword_mut? }
-fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ literal)? }
+fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
 fn_normal_args = { fn_arg ~ ("," ~ fn_arg)* }
 fn_rest        = { "..." ~ fn_arg_mut ~ name }
 fn_args        = {

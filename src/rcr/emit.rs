@@ -1,15 +1,3 @@
-use crate::rcr::{
-    emit::{
-        alloc::{stmt_let, Content, Local, Locals, Memory},
-        error::{e, Error, Result},
-        output::Output,
-        scope::Scope,
-    },
-    syntax::{
-        Builtin, Call, FnName, For, ParseTree, Script, Statement, Target, TargetInner, While,
-    },
-};
-
 mod output {
     use crate::rcr::{
         emit::error::{e, Result},
@@ -80,10 +68,6 @@ mod output {
 
         pub fn zero_current(&mut self) {
             self.data += "[-]";
-        }
-
-        pub fn inc_current_by(&mut self, value: impl Settable) {
-            value.inc(self);
         }
 
         pub fn inc_current(&mut self) {
@@ -166,7 +150,7 @@ mod scope {
 mod alloc {
     use super::error::{e, Result};
     use super::output::{Output, Settable};
-    use crate::rcr::emit::State;
+    use crate::rcr::emit::main::State;
     use crate::{
         builder::CellState,
         rcr::syntax::{ArraySize, Binding, BindingInDestructure, Kind, Let, Literal, Name},
@@ -193,6 +177,16 @@ mod alloc {
             let pos = memory.create_single();
             init(output, memory, pos, value);
             Content::Single(pos)
+        }
+
+        pub fn create_single_by_pos(
+            output: &mut Output,
+            memory: &mut Memory,
+            value: impl Settable,
+        ) -> usize {
+            let pos = memory.create_single();
+            init(output, memory, pos, value);
+            pos
         }
 
         pub fn create_array(
@@ -251,8 +245,12 @@ mod alloc {
             }
         }
 
-        pub fn assert_mutability(&self, needs_mutability: bool) -> Result<&Content> {
-            if needs_mutability && !self.mutable {
+        pub fn assert_mutability_or_unsafe(
+            &self,
+            needs_mutability: bool,
+            is_unsafe: bool,
+        ) -> Result<&Content> {
+            if !is_unsafe && needs_mutability && !self.mutable {
                 e!(CannotMutateImmutableVariable)
             } else {
                 Ok(&self.content)
@@ -833,6 +831,48 @@ mod error {
         /// }
         /// ```
         TargetedFunctionWithoutReturn,
+        /// The built-in `goto` function must be passed a single scalar value
+        ///
+        /// ```
+        /// fn main() {
+        ///   goto [2 3]; // error because there are multiple candidates
+        ///   goto 2 3;   // error because there are multiple candidates
+        ///   goto [2];   // error because `goto` only supports scalars
+        ///   goto;       // error because `goto` needs one argument
+        /// }
+        /// ```
+        GotoRequiresExactlyOneScalar,
+        /// The named function does not exist
+        ///
+        /// ```
+        /// fn main() {
+        ///   mut a = 2;
+        ///   zero a;
+        /// }
+        /// ```
+        FunctionDoesNotExist,
+        /// Cannot spread a scalar value
+        ///
+        /// ```
+        /// fn main() {
+        ///   inc ...23;
+        /// }
+        /// ```
+        SpreadScalar,
+        /// An array was passed to a function with an invalid size.
+        ///
+        /// ```
+        /// fn my_fn(a[2]) {}
+        /// fn my_dest([a b]) {}
+        ///
+        /// fn main() {
+        ///   my_fn([2]);
+        ///   my_fn([2 3 4]);
+        ///   my_dest([2]);
+        ///   my_dest([2 3 4]);
+        /// }
+        /// ```
+        ArrayParamIncorrectSize,
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
@@ -843,230 +883,504 @@ mod error {
         };
     }
 
-    macro_rules! ex {
+    macro_rules! rv {
         ($x:ident) => {
-            ::std::result::Result::Err($crate::rcr::emit::error::Error::$x)
+            Retval::None($crate::rcr::emit::error::Error::$x)
         };
     }
 
     use std::fmt::Display;
 
-    pub(super) use {e, ex};
+    pub(super) use {e, rv};
 }
 
-#[derive(Debug)]
-struct State<'output, 'memory, 'locals, 'scope> {
-    pub output: &'output mut Output,
-    pub memory: &'memory mut Memory,
-    pub locals: &'locals mut Locals,
-    pub scope: &'scope Scope<'scope>,
-}
-
-/// Return values:
-///
-/// - `Ok(Ok(local))` means the script executed successfully and returned `local`
-/// - `Ok(Err(e))` means the script executed successfully but returned no local because `e`
-/// - `Err(e)` means the script failed to execute because `e`
-fn stmt_call(state: &mut State, stmt: &Call) -> Result<Result<Local>> {
-    match stmt.name {
-        FnName::Builtin(Builtin::Goto) => {
-            todo!()
-        }
-        FnName::Builtin(name) => {
-            let mut args = Vec::new();
-
-            for el in stmt.args.iter() {
-                let Some(el) = el else { e!(NoDefaultValue) };
-                let local = exec_target(state, el)?;
-                local
-                    .assert_mutability(name.mutates())?
-                    .each(|x| args.push(x));
-            }
-
-            match name {
-                Builtin::Goto => unreachable!(),
-                Builtin::Assert(cell_state) => {
-                    for pos in args {
-                        state.memory.assert(pos, cell_state);
-                    }
-                }
-                Builtin::Inc => {
-                    for pos in args {
-                        state.output.goto(pos);
-                        state.output.inc_current();
-                    }
-                }
-                Builtin::Dec => {
-                    for pos in args {
-                        state.output.goto(pos);
-                        state.output.dec_current();
-                    }
-                }
-                Builtin::Read => {
-                    for pos in args {
-                        state.output.goto(pos);
-                        state.output.read_current();
-                    }
-                }
-                Builtin::Write => {
-                    for pos in args {
-                        state.output.goto(pos);
-                        state.output.write_current();
-                    }
-                }
-            }
-
-            Ok(ex!())
-        }
-        FnName::UserDefined(_) => todo!(),
-    }
-}
-
-fn stmt_while(state: &mut State, stmt: &While) -> Result<()> {
-    let local = exec_target(state, &stmt.target)?;
-    let pos = match local.content {
-        Content::Single(x) => x,
-        Content::Array(_) => e!(WhileLoopHeadedByArray),
-    };
-    state.output.goto(pos);
-    state.output.start_loop();
-    Memory::possibly(state, |state| exec_block(state, &stmt.body))?;
-    state.output.goto(pos);
-    state.output.end_loop();
-    Ok(())
-}
-
-fn stmt_for(state: &mut State, stmt: &For) -> Result<()> {
-    let local = exec_target(state, &stmt.array)?;
-    let content = local.assert_mutability(stmt.mutable)?;
-    let pos = match content {
-        Content::Single(_) => e!(IterationOverScalar),
-        Content::Array(x) => x,
-    };
-    let prev = state.locals.remove(stmt.bound);
-    for pos in pos {
-        let local = Content::Single(*pos).into_local(stmt.mutable);
-        state.locals.set(stmt.bound, local);
-        exec_block(state, &stmt.body)?;
-        // TODO: ensure zero-tracking is valid in for loops
-    }
-    if let Some(x) = prev {
-        state.locals.set(stmt.bound, x);
-    }
-    Ok(())
-}
-
-fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
-    let local = match target.inner {
-        TargetInner::Local(name) => match state.locals.get(name) {
-            Some(x) => x.clone(),
-            None => e!(LocalDoesNotExist),
+mod main {
+    use crate::rcr::{
+        emit::{
+            alloc::{stmt_let, Content, Local, Locals, Memory},
+            error::{e, rv, Error, Result},
+            output::Output,
+            scope::Scope,
         },
-        TargetInner::Int(value) => {
-            Content::create_single(&mut state.output, &mut state.memory, value).into_local(true)
+        syntax::{
+            ArraySize, Binding, BindingInDestructure, Builtin, Call, FnDeclaration, FnName, For,
+            Kind, ParseTree, Script, Statement, Target, TargetInner, While,
+        },
+    };
+
+    #[derive(Debug)]
+    pub struct State<'output, 'memory, 'locals, 'scope> {
+        pub output: &'output mut Output,
+        pub memory: &'memory mut Memory,
+        pub locals: &'locals mut Locals,
+        pub scope: &'scope Scope<'scope>,
+    }
+
+    enum Retval {
+        /// The action returned a local
+        Some(Local),
+        /// The action did not return a value and provided a reason why
+        None(Error),
+    }
+
+    impl Retval {
+        fn into_result(self) -> Result<Local> {
+            match self {
+                Self::Some(x) => Ok(x),
+                Self::None(x) => Err(x),
+            }
         }
-        TargetInner::Str(ref value) => {
-            Content::create_array(&mut state.output, &mut state.memory, value.as_bytes())
-                .into_local(true)
+    }
+
+    fn stmt_call(state: &mut State, stmt: &Call) -> Result<Retval> {
+        Ok(match stmt.name {
+            FnName::Builtin(Builtin::Goto) => {
+                let mut i = stmt.args.iter();
+                match (i.next(), i.next(), &stmt.rest) {
+                    (None, _, None)
+                    | (Some(_), Some(_), _)
+                    | (Some(_), _, Some(_))
+                    | (_, Some(_), Some(_)) => {
+                        e!(GotoRequiresExactlyOneScalar)
+                    }
+                    (Some(None), None, _) => e!(NoDefaultValue),
+                    (Some(Some(target)), None, None) => {
+                        let local = exec_target(state, target)?;
+                        match local.content {
+                            Content::Single(pos) => {
+                                state.output.goto(pos);
+                                rv!(TargetedFunctionWithoutReturn)
+                            }
+                            Content::Array(_) => e!(GotoRequiresExactlyOneScalar),
+                        }
+                    }
+                    (None, None, Some(target)) => {
+                        let local = exec_target(state, &target)?;
+                        match local.content {
+                            Content::Single(_) => e!(SpreadScalar),
+                            Content::Array(arr) => {
+                                if arr.len() == 1 {
+                                    state.output.goto(arr[0]);
+                                    rv!(TargetedFunctionWithoutReturn)
+                                } else {
+                                    e!(GotoRequiresExactlyOneScalar)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            FnName::Builtin(name) => {
+                let mut args = Vec::new();
+
+                for el in stmt.args.iter() {
+                    let Some(el) = el else { e!(NoDefaultValue) };
+                    let local = exec_target(state, el)?;
+                    local
+                        .assert_mutability_or_unsafe(name.mutates(), stmt.is_unsafe)?
+                        .each(|x| args.push(x));
+                }
+
+                if let Some(arg) = &stmt.rest {
+                    match exec_target(state, arg)?
+                        .assert_mutability_or_unsafe(name.mutates(), stmt.is_unsafe)?
+                    {
+                        Content::Single(_) => e!(SpreadScalar),
+                        Content::Array(x) => args.extend(x),
+                    }
+                }
+
+                match name {
+                    Builtin::Goto => unreachable!(),
+                    Builtin::Assert(cell_state) => {
+                        for pos in args {
+                            state.memory.assert(pos, cell_state);
+                        }
+                    }
+                    Builtin::Inc => {
+                        for pos in args {
+                            state.output.goto(pos);
+                            state.output.inc_current();
+                        }
+                    }
+                    Builtin::Dec => {
+                        for pos in args {
+                            state.output.goto(pos);
+                            state.output.dec_current();
+                        }
+                    }
+                    Builtin::Read => {
+                        for pos in args {
+                            state.output.goto(pos);
+                            state.output.read_current();
+                        }
+                    }
+                    Builtin::Write => {
+                        for pos in args {
+                            state.output.goto(pos);
+                            state.output.write_current();
+                        }
+                    }
+                }
+
+                rv!(TargetedFunctionWithoutReturn)
+            }
+            FnName::UserDefined(name) => match state.scope.get(&name) {
+                Some(f) => exec_fn_call(state, stmt, f)?,
+                None => e!(FunctionDoesNotExist),
+            },
+        })
+    }
+
+    fn stmt_while(state: &mut State, stmt: &While) -> Result<()> {
+        let local = exec_target(state, &stmt.target)?;
+        let pos = match local.content {
+            Content::Single(x) => x,
+            Content::Array(_) => e!(WhileLoopHeadedByArray),
+        };
+        state.output.goto(pos);
+        state.output.start_loop();
+        Memory::possibly(state, |state| exec_block(state, &stmt.body))?;
+        state.output.goto(pos);
+        state.output.end_loop();
+        Ok(())
+    }
+
+    fn stmt_for(state: &mut State, stmt: &For) -> Result<()> {
+        let local = exec_target(state, &stmt.array)?;
+        let content = local.assert_mutability_or_unsafe(stmt.mutable, false)?;
+        let pos = match content {
+            Content::Single(_) => e!(IterationOverScalar),
+            Content::Array(x) => x,
+        };
+        let prev = state.locals.remove(stmt.bound);
+        for pos in pos {
+            let local = Content::Single(*pos).into_local(stmt.mutable);
+            state.locals.set(stmt.bound, local);
+            exec_block(state, &stmt.body)?;
+            // TODO: ensure zero-tracking is valid in for loops
         }
-        TargetInner::Relative(offset) => {
-            Content::Single(state.output.pos_by_offset(offset)?).into_local(false)
+        if let Some(x) = prev {
+            state.locals.set(stmt.bound, x);
         }
-        TargetInner::Array(ref block) => {
+        Ok(())
+    }
+
+    fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
+        let local = match target.inner {
+            TargetInner::Local(name) => match state.locals.get(name) {
+                Some(x) => x.clone(),
+                None => e!(LocalDoesNotExist),
+            },
+            TargetInner::Int(value) => {
+                Content::create_single(&mut state.output, &mut state.memory, value).into_local(true)
+            }
+            TargetInner::Str(ref value) => {
+                Content::create_array(&mut state.output, &mut state.memory, value.as_bytes())
+                    .into_local(true)
+            }
+            TargetInner::Relative(offset) => {
+                Content::Single(state.output.pos_by_offset(offset)?).into_local(false)
+            }
+            TargetInner::Array(ref block) => {
+                let mut pos = Vec::new();
+                let mut mutable = true;
+                for target in block {
+                    let local = exec_target(state, target)?;
+                    if !local.mutable {
+                        mutable = false;
+                    }
+                    match local.content {
+                        Content::Single(x) => pos.push(x),
+                        Content::Array(_) => e!(ArrayElementsMustBeScalars),
+                    }
+                }
+                Content::Array(pos).into_local(mutable)
+            }
+            TargetInner::Expr(ref block) => exec_block(state, block)?.into_result()?,
+        };
+
+        match target.index {
+            None => Ok(local),
+            Some(index) => local.index(index as usize),
+        }
+    }
+
+    fn exec_fn_call(state_caller: &mut State, stmt: &Call, f: &FnDeclaration) -> Result<Retval> {
+        // Stages of function execution
+        //
+        // These stages ensure that function can only return values which depend on their immediate
+        // parameters. This prevents functions from going beyond their stack limit.
+        //
+        // 1. Resolve arguments and check their types and mutability
+        // 2. Create body locals (clone from arguments locals)
+        // 3. Execute function body
+        // 4. Clean up body locals
+        // 5. Execute return value
+
+        let scope_fn = state_caller.scope.child(&f.body.fns)?;
+
+        // 1. Resolve parameter values and check their types and mutability
+
+        let mut args = Vec::new();
+        for arg in stmt.args.iter() {
+            match arg {
+                Some(target) => {
+                    args.push(Some(exec_target(state_caller, target)?));
+                }
+                None => args.push(None),
+            }
+        }
+        if let Some(target) = &stmt.rest {
+            let local = exec_target(state_caller, target)?;
+            match local.content {
+                Content::Single(_) => e!(SpreadScalar),
+                Content::Array(arr) => {
+                    for pos in arr {
+                        args.push(Some(Local {
+                            content: Content::Single(pos),
+                            mutable: local.mutable,
+                        }))
+                    }
+                }
+            }
+        }
+
+        let mut locals_args = Locals::default();
+        let mut state_args = State {
+            locals: &mut locals_args,
+            memory: state_caller.memory,
+            output: state_caller.output,
+            scope: &scope_fn,
+        };
+
+        args.reverse();
+
+        for param in f.params.iter() {
+            let arg = match args.pop().flatten() {
+                Some(x) => x,
+                None => match param.default {
+                    Some(ref default) => exec_target(&mut state_args, default)?,
+                    None => e!(NoDefaultValue),
+                },
+            };
+
+            let content = arg.assert_mutability_or_unsafe(param.mutable, false)?;
+            let arg = || content.clone().into_local(param.mutable);
+
+            match param.binding {
+                Binding::Standard {
+                    name,
+                    kind: Kind::Scalar,
+                } => {
+                    if let Content::Array(_) = content {
+                        e!(ScalarInitializedWithArray)
+                    }
+                    state_args.locals.set(name, arg());
+                }
+                Binding::Standard {
+                    name,
+                    kind: Kind::Array(size),
+                } => {
+                    let Content::Array(pos_vec) = content else {
+                        e!(ArrayInitializedWithScalar)
+                    };
+                    let actual_size = pos_vec.len();
+                    match size {
+                        ArraySize::Exact(size) => {
+                            if actual_size != size {
+                                e!(ArrayParamIncorrectSize)
+                            }
+                        }
+                        ArraySize::AtLeast(size) => {
+                            if actual_size < size {
+                                e!(ArrayParamIncorrectSize)
+                            }
+                        }
+                        ArraySize::Inferred => {}
+                    }
+                    state_args.locals.set(name, arg());
+                }
+                Binding::Destructured {
+                    ref els,
+                    accept_inexact,
+                } => {
+                    let Content::Array(pos_vec) = content else {
+                        e!(ArrayInitializedWithScalar)
+                    };
+                    let actual_size = pos_vec.len();
+                    let min_len = els
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, v)| !v.ignored_or_default())
+                        .map(|x| x.0 + 1)
+                        .unwrap_or_default();
+                    match accept_inexact {
+                        true => {
+                            if actual_size < min_len {
+                                e!(ArrayParamIncorrectSize)
+                            }
+                        }
+                        false => {
+                            if actual_size < min_len || actual_size > els.len() {
+                                e!(ArrayParamIncorrectSize)
+                            }
+                        }
+                    }
+                    for (index, binding) in els.iter().enumerate() {
+                        let BindingInDestructure::Named { name, default } = binding else {
+                            continue;
+                        };
+                        let pos = match pos_vec.get(index) {
+                            Some(x) => *x,
+                            None => match default {
+                                Some(default) => Content::create_single_by_pos(
+                                    state_args.output,
+                                    state_args.memory,
+                                    *default,
+                                ),
+                                None => e!(NoDefaultValue),
+                            },
+                        };
+                        state_args
+                            .locals
+                            .set(*name, Content::Single(pos).into_local(param.mutable));
+                    }
+                }
+            }
+        }
+
+        if let Some(param_rest) = &f.param_rest {
+            args.reverse();
             let mut pos = Vec::new();
-            let mut mutable = true;
-            for target in block {
-                let local = exec_target(state, target)?;
-                if !local.mutable {
-                    mutable = false;
-                }
-                match local.content {
-                    Content::Single(x) => pos.push(x),
+            for arg in args {
+                let arg = match arg {
+                    Some(x) => x,
+                    None => e!(NoDefaultValue),
+                };
+
+                let arg = arg.assert_mutability_or_unsafe(param_rest.mutable, stmt.is_unsafe)?;
+
+                let arg = match arg {
+                    Content::Single(x) => *x,
                     Content::Array(_) => e!(ArrayElementsMustBeScalars),
+                };
+
+                pos.push(arg);
+            }
+
+            state_args.locals.set(
+                param_rest.name,
+                Content::Array(pos).into_local(param_rest.mutable),
+            );
+        }
+
+        // 2. Create body locals (clone from arguments locals)
+
+        let mut state_body = State {
+            locals: &mut state_args.locals.clone(),
+            memory: state_args.memory,
+            output: state_args.output,
+            scope: &scope_fn,
+        };
+
+        let locals_head = state_body.memory.len();
+
+        // 3. Execute function body
+
+        exec_stmts_without_script(&mut state_body, &f.body.stmts)?;
+
+        // 4. Clean up body locals
+
+        state_body
+            .memory
+            .clear(&mut state_body.output, locals_head..);
+
+        drop(state_body);
+
+        // 5. Execute return value
+
+        Ok(match f.returns {
+            Some(ref target) => Retval::Some(exec_target(&mut state_args, target)?),
+            None => rv!(TargetedFunctionWithoutReturn),
+        })
+    }
+
+    // fn exec(state: &mut State, stmts: &[Statement]) -> Result<Option<Local>> {
+    //     let original_memory_len = state.memory.len();
+    //     // exec stmts
+    //     state.memory.clear(&mut state.output, original_memory_len..);
+    //     Ok(())
+    // }
+
+    fn exec_stmts_without_script(state: &mut State, stmts: &[Statement]) -> Result<Retval> {
+        let mut output = rv!(TargetedEmptyBlock);
+
+        for stmt in stmts {
+            output = match stmt {
+                Statement::Let(stmt) => Retval::Some(
+                    stmt_let(
+                        &mut state.output,
+                        &mut state.memory,
+                        &mut state.locals,
+                        stmt,
+                    )?
+                    .clone(),
+                ),
+                Statement::Call(stmt) => stmt_call(state, stmt)?,
+                Statement::While(stmt) => {
+                    stmt_while(state, stmt)?;
+                    rv!(TargetedWhileLoop)
+                }
+                Statement::For(stmt) => {
+                    stmt_for(state, stmt)?;
+                    rv!(TargetedForLoop)
                 }
             }
-            Content::Array(pos).into_local(mutable)
         }
-        TargetInner::Expr(ref block) => exec_block(state, script),
-        _ => todo!(),
-    };
 
-    match target.index {
-        None => Ok(local),
-        Some(index) => local.index(index as usize),
+        Ok(output)
     }
-}
 
-// fn exec(state: &mut State, stmts: &[Statement]) -> Result<Option<Local>> {
-//     let original_memory_len = state.memory.len();
-//     // exec stmts
-//     state.memory.clear(&mut state.output, original_memory_len..);
-//     Ok(())
-// }
+    fn exec_block(state: &mut State, script: &Script) -> Result<Retval> {
+        let state = &mut State {
+            locals: state.locals,
+            memory: state.memory,
+            output: state.output,
+            scope: &state.scope.child(&script.fns)?,
+        };
 
-/// Return values:
-///
-/// - `Ok(Ok(local))` means the script executed successfully and returned `local`
-/// - `Ok(Err(e))` means the script executed successfully but returned no local because `e`
-/// - `Err(e)` means the script failed to execute because `e`
-fn exec_block(state: &mut State, script: &Script) -> Result<Result<Local>> {
-    let state = &mut State {
-        locals: state.locals,
-        memory: state.memory,
-        output: state.output,
-        scope: &state.scope.child(&script.fns)?,
-    };
+        exec_stmts_without_script(state, &script.stmts)
+    }
 
-    let mut output = Err(Error::TargetedEmptyBlock);
+    pub fn emit(parse: &ParseTree) -> Result<String> {
+        let scope = Scope::new(&parse.fns)?;
 
-    for stmt in &script.stmts {
-        output = match stmt {
-            Statement::Let(stmt) => Ok(stmt_let(
-                &mut state.output,
-                &mut state.memory,
-                &mut state.locals,
-                stmt,
-            )?
-            .clone()),
-            Statement::Call(stmt) => stmt_call(state, stmt)?,
-            Statement::While(stmt) => {
-                stmt_while(state, stmt)?;
-                None
-            }
-            Statement::For(stmt) => {
-                stmt_for(state, stmt)?;
-                None
-            }
+        let Some(main) = &parse.names.get("main") else {
+            e!(MainDoesNotExist)
+        };
+        let Some(main) = scope.get(main) else {
+            e!(MainDoesNotExist)
+        };
+        if !main.params.is_empty() || main.param_rest.is_some() {
+            e!(MainTakesParameters)
         }
-    }
+        if main.returns.is_some() {
+            e!(MainReturns)
+        }
 
-    Ok(output)
+        let mut output = Output::default();
+
+        let mut state = State {
+            output: &mut output,
+            locals: &mut Locals::default(),
+            memory: &mut Memory::default(),
+            scope: &scope,
+        };
+
+        exec_block(&mut state, &main.body).map(|_| output.into_data())
+    }
 }
 
-pub fn emit(parse: &ParseTree) -> Result<String> {
-    let scope = Scope::new(&parse.fns)?;
-
-    let Some(main) = &parse.names.get("main") else {
-        e!(MainDoesNotExist)
-    };
-    let Some(main) = scope.get(main) else {
-        e!(MainDoesNotExist)
-    };
-    if !main.args.is_empty() || main.rest.is_some() {
-        e!(MainTakesParameters)
-    }
-    if main.returns.is_some() {
-        e!(MainReturns)
-    }
-
-    let mut output = Output::default();
-
-    let mut state = State {
-        output: &mut output,
-        locals: &mut Locals::default(),
-        memory: &mut Memory::default(),
-        scope: &scope,
-    };
-
-    exec_block(&mut state, &main.body).map(|_| output.into_data())
-}
+pub use main::emit;
