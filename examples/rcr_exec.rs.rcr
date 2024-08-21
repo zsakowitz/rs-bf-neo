@@ -1,5 +1,5 @@
 fn main() {
-  let mut [a b];
+  mut [a b];
   inc a;
   inc b;
   inc a;

@@ -1,11 +1,13 @@
 use crate::rcr::{
     emit::{
         alloc::{stmt_let, Content, Local, Locals, Memory},
-        error::{e, Result},
+        error::{e, Error, Result},
         output::Output,
         scope::Scope,
     },
-    syntax::{Builtin, Call, FnName, ParseTree, Script, Statement, Target, TargetInner},
+    syntax::{
+        Builtin, Call, FnName, For, ParseTree, Script, Statement, Target, TargetInner, While,
+    },
 };
 
 mod output {
@@ -21,6 +23,14 @@ mod output {
     }
 
     impl Output {
+        pub fn start_loop(&mut self) {
+            self.data += "[";
+        }
+
+        pub fn end_loop(&mut self) {
+            self.data += "]";
+        }
+
         pub fn pos_by_offset(&self, offset: Offset) -> Result<usize> {
             match self.pos.checked_add_signed(offset.0) {
                 Some(x) => Ok(x),
@@ -156,6 +166,7 @@ mod scope {
 mod alloc {
     use super::error::{e, Result};
     use super::output::{Output, Settable};
+    use crate::rcr::emit::State;
     use crate::{
         builder::CellState,
         rcr::syntax::{ArraySize, Binding, BindingInDestructure, Kind, Let, Literal, Name},
@@ -222,8 +233,8 @@ mod alloc {
 
     #[derive(Clone, Debug)]
     pub struct Local {
-        content: Content,
-        mutable: bool,
+        pub content: Content,
+        pub mutable: bool,
     }
 
     impl Local {
@@ -298,16 +309,19 @@ mod alloc {
             }
         }
 
-        fn possibly_executed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
-            let prev_map = self.previous.replace(HashMap::new());
-            let result = f(self);
+        /// Assumes any changes to local in the function `f` may not happen.
+        /// This is used to emit `while {}` constructs.
+        pub fn possibly<T>(state: &mut State, f: impl FnOnce(&mut State) -> T) -> T {
+            let prev_map = state.memory.previous.replace(HashMap::new());
+            let result = f(state);
             // we put it there so it should still exist
-            let this_map = mem::replace(&mut self.previous, prev_map).unwrap();
+            let this_map = mem::replace(&mut state.memory.previous, prev_map).unwrap();
             for (index, old_state) in this_map {
-                let new_state = self.cells.get(index).copied().unwrap_or(CellState::Zeroed);
+                let new_state = state.memory.cells.get(index).copied();
 
-                self.cells[index] = match (old_state, new_state) {
-                    (CellState::Zeroed, CellState::Zeroed) => CellState::Zeroed,
+                state.memory.cells[index] = match (old_state, new_state) {
+                    (CellState::Zeroed, Some(CellState::Zeroed)) => CellState::Zeroed,
+                    (CellState::Zeroed, None) => CellState::Zeroed,
                     (_, _) => CellState::Unknown,
                 };
             }
@@ -326,7 +340,11 @@ mod alloc {
             self.named.get(&name)
         }
 
-        fn set(&mut self, name: Name, local: Local) -> &Local {
+        pub fn remove(&mut self, name: Name) -> Option<Local> {
+            self.named.remove(&name)
+        }
+
+        pub fn set(&mut self, name: Name, local: Local) -> &Local {
             match self.named.entry(name) {
                 Entry::Occupied(entry) => {
                     let value = entry.into_mut();
@@ -743,6 +761,78 @@ mod error {
         /// }
         /// ```
         OffsetExitsTapeBounds,
+        /// A while loop must be headed by a single cell
+        ///
+        /// ```
+        /// fn main() {
+        ///   let a[2] = [2 3];
+        ///
+        ///   while a {
+        ///     // which cell should be taken as the condition? unknown, and thus an error
+        ///   }
+        /// }
+        /// ```
+        WhileLoopHeadedByArray,
+        /// Cannot iterate over a scalar value
+        ///
+        /// ```
+        /// fn main() {
+        ///   for a in 34 {
+        ///     // what value should `a` have? unknown, and thus an error
+        ///   }
+        /// }
+        /// ```
+        IterationOverScalar,
+        /// Array elements must be scalars
+        ///
+        /// ```
+        /// fn main() {
+        ///   let a[] = [2 3 4];
+        ///   let b[] = [a 7];
+        /// }
+        /// ```
+        ArrayElementsMustBeScalars,
+        /// A while loop was used as a target
+        ///
+        /// ```
+        /// fn main() {
+        ///   mut a = 2;
+        ///   let b = (while a { dec a; });
+        ///   // while loops do not return values and cannot be used as targets
+        /// }
+        /// ```
+        TargetedWhileLoop,
+        /// A for loop was used as a target
+        ///
+        /// ```
+        /// fn main() {
+        ///   mut a[] = [2 3];
+        ///   let b = (for mut x in a { inc x; });
+        ///   // for loops do not return values and cannot be used as targets
+        /// }
+        /// ```
+        TargetedForLoop,
+        /// An empty block was used as a target
+        ///
+        /// This should never occur in a regular program.
+        TargetedEmptyBlock,
+        /// A function without a return target was used as a target
+        ///
+        /// ```
+        /// fn zero(mut x) {
+        ///   while x {
+        ///     dec x;
+        ///   }
+        /// }
+        ///
+        /// fn main() {
+        ///   mut a = 2;
+        ///   let b = (inc a);
+        ///   let c = (zero a);
+        ///   // `inc` and `zero` do not return values and cannot be used as targets
+        /// }
+        /// ```
+        TargetedFunctionWithoutReturn,
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
@@ -753,20 +843,31 @@ mod error {
         };
     }
 
+    macro_rules! ex {
+        ($x:ident) => {
+            ::std::result::Result::Err($crate::rcr::emit::error::Error::$x)
+        };
+    }
+
     use std::fmt::Display;
 
-    pub(super) use e;
+    pub(super) use {e, ex};
 }
 
 #[derive(Debug)]
-struct State<'a> {
-    pub output: Output,
-    pub memory: Memory,
-    pub locals: Locals,
-    pub scope: Scope<'a>,
+struct State<'output, 'memory, 'locals, 'scope> {
+    pub output: &'output mut Output,
+    pub memory: &'memory mut Memory,
+    pub locals: &'locals mut Locals,
+    pub scope: &'scope Scope<'scope>,
 }
 
-fn stmt_call(state: &mut State, stmt: &Call) -> Result<Option<Target>> {
+/// Return values:
+///
+/// - `Ok(Ok(local))` means the script executed successfully and returned `local`
+/// - `Ok(Err(e))` means the script executed successfully but returned no local because `e`
+/// - `Err(e)` means the script failed to execute because `e`
+fn stmt_call(state: &mut State, stmt: &Call) -> Result<Result<Local>> {
     match stmt.name {
         FnName::Builtin(Builtin::Goto) => {
             todo!()
@@ -815,10 +916,44 @@ fn stmt_call(state: &mut State, stmt: &Call) -> Result<Option<Target>> {
                 }
             }
 
-            Ok(None)
+            Ok(ex!())
         }
         FnName::UserDefined(_) => todo!(),
     }
+}
+
+fn stmt_while(state: &mut State, stmt: &While) -> Result<()> {
+    let local = exec_target(state, &stmt.target)?;
+    let pos = match local.content {
+        Content::Single(x) => x,
+        Content::Array(_) => e!(WhileLoopHeadedByArray),
+    };
+    state.output.goto(pos);
+    state.output.start_loop();
+    Memory::possibly(state, |state| exec_block(state, &stmt.body))?;
+    state.output.goto(pos);
+    state.output.end_loop();
+    Ok(())
+}
+
+fn stmt_for(state: &mut State, stmt: &For) -> Result<()> {
+    let local = exec_target(state, &stmt.array)?;
+    let content = local.assert_mutability(stmt.mutable)?;
+    let pos = match content {
+        Content::Single(_) => e!(IterationOverScalar),
+        Content::Array(x) => x,
+    };
+    let prev = state.locals.remove(stmt.bound);
+    for pos in pos {
+        let local = Content::Single(*pos).into_local(stmt.mutable);
+        state.locals.set(stmt.bound, local);
+        exec_block(state, &stmt.body)?;
+        // TODO: ensure zero-tracking is valid in for loops
+    }
+    if let Some(x) = prev {
+        state.locals.set(stmt.bound, x);
+    }
+    Ok(())
 }
 
 fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
@@ -837,6 +972,22 @@ fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
         TargetInner::Relative(offset) => {
             Content::Single(state.output.pos_by_offset(offset)?).into_local(false)
         }
+        TargetInner::Array(ref block) => {
+            let mut pos = Vec::new();
+            let mut mutable = true;
+            for target in block {
+                let local = exec_target(state, target)?;
+                if !local.mutable {
+                    mutable = false;
+                }
+                match local.content {
+                    Content::Single(x) => pos.push(x),
+                    Content::Array(_) => e!(ArrayElementsMustBeScalars),
+                }
+            }
+            Content::Array(pos).into_local(mutable)
+        }
+        TargetInner::Expr(ref block) => exec_block(state, script),
         _ => todo!(),
     };
 
@@ -846,28 +997,50 @@ fn exec_target(state: &mut State, target: &Target) -> Result<Local> {
     }
 }
 
-fn exec(state: &mut State, stmts: &[Statement]) -> Result<()> {
-    let original_memory_len = state.memory.len();
+// fn exec(state: &mut State, stmts: &[Statement]) -> Result<Option<Local>> {
+//     let original_memory_len = state.memory.len();
+//     // exec stmts
+//     state.memory.clear(&mut state.output, original_memory_len..);
+//     Ok(())
+// }
 
-    for stmt in stmts {
-        match stmt {
-            Statement::Let(stmt) => {
-                stmt_let(
-                    &mut state.output,
-                    &mut state.memory,
-                    &mut state.locals,
-                    stmt,
-                )?;
+/// Return values:
+///
+/// - `Ok(Ok(local))` means the script executed successfully and returned `local`
+/// - `Ok(Err(e))` means the script executed successfully but returned no local because `e`
+/// - `Err(e)` means the script failed to execute because `e`
+fn exec_block(state: &mut State, script: &Script) -> Result<Result<Local>> {
+    let state = &mut State {
+        locals: state.locals,
+        memory: state.memory,
+        output: state.output,
+        scope: &state.scope.child(&script.fns)?,
+    };
+
+    let mut output = Err(Error::TargetedEmptyBlock);
+
+    for stmt in &script.stmts {
+        output = match stmt {
+            Statement::Let(stmt) => Ok(stmt_let(
+                &mut state.output,
+                &mut state.memory,
+                &mut state.locals,
+                stmt,
+            )?
+            .clone()),
+            Statement::Call(stmt) => stmt_call(state, stmt)?,
+            Statement::While(stmt) => {
+                stmt_while(state, stmt)?;
+                None
             }
-            Statement::Call(stmt) => {
-                stmt_call(state, stmt)?;
+            Statement::For(stmt) => {
+                stmt_for(state, stmt)?;
+                None
             }
-            _ => todo!(),
         }
     }
 
-    state.memory.clear(&mut state.output, original_memory_len..);
-    Ok(())
+    Ok(output)
 }
 
 pub fn emit(parse: &ParseTree) -> Result<String> {
@@ -886,12 +1059,14 @@ pub fn emit(parse: &ParseTree) -> Result<String> {
         e!(MainReturns)
     }
 
+    let mut output = Output::default();
+
     let mut state = State {
-        output: Output::default(),
-        locals: Locals::default(),
-        memory: Memory::default(),
-        scope: scope.child(&main.body.fns)?,
+        output: &mut output,
+        locals: &mut Locals::default(),
+        memory: &mut Memory::default(),
+        scope: &scope,
     };
 
-    exec(&mut state, &main.body.stmts).map(|_| state.output.into_data())
+    exec_block(&mut state, &main.body).map(|_| output.into_data())
 }

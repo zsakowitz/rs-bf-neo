@@ -6,7 +6,7 @@ fn add(mut a, mut b) -> a {
 }
 
 fn clone(a, mut b = 0) -> b {
-    let mut c;
+    mut c;
 
     while a {
         unsafe dec a;
@@ -75,10 +75,10 @@ fn more_let_examples(
     let a[2];
     let a[]; // runtime error
 
-    let mut a[] = "String";
+    mut a[] = "String";
     let a = 23;
 
-    let mut [a b ...] = "String";
+    mut [a b ...] = "String";
     let [a=2 b=3] = "utf-8 byte array";
-    let mut [a=2 b c=3 ...] = "world";
+    mut [a=2 b c=3 ...] = "world";
 }

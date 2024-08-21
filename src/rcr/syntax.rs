@@ -471,8 +471,11 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
             }
             Rule::stmt_let => {
                 let mut inner = pair.into_inner();
-                inner.next().unwrap();
-                let mutable = inner.next().unwrap().into_inner().next().is_some();
+                let mutable = match inner.next().unwrap().into_inner().next().unwrap().as_str() {
+                    "let" => false,
+                    "mut" => true,
+                    _ => unreachable!(),
+                };
                 let let_bindable = inner.next().unwrap();
                 let let_init = inner.next();
 

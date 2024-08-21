@@ -70,12 +70,13 @@ call_unsafe = { keyword_unsafe? }
 arg_list   = { arg* }
 arg_spread = { ("..." ~ target)? }
 
-let_mut = { keyword_mut? }
+maybe_mut = { keyword_mut? }
+let_mut   = { keyword_let | keyword_mut }
 
 stmt_while = { keyword_while ~ target ~ block }
-stmt_for   = { keyword_for ~ let_mut ~ name ~ keyword_in ~ target ~ block }
+stmt_for   = { keyword_for ~ maybe_mut ~ name ~ keyword_in ~ target ~ block }
 stmt_call  = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
-stmt_let   = { keyword_let ~ let_mut ~ let_bindable ~ let_init? }
+stmt_let   = { let_mut ~ let_bindable ~ let_init? }
 
 let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
