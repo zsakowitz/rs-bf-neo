@@ -412,6 +412,10 @@ mod alloc {
             }
         }
 
+        pub fn get(&self, pos: usize) -> CellState {
+            self.cells[pos]
+        }
+
         /// Assumes any changes to local in the function `f` may not happen.
         /// This is used to emit `while {}` constructs.
         pub fn possibly<T>(state: &mut State, f: impl FnOnce(&mut State) -> T) -> T {
@@ -1191,11 +1195,13 @@ mod main {
             Content::Single(x) => x,
             Content::Array(_) => e!(WhileLoopHeadedByArray),
         };
-        state.output.goto(pos);
-        state.output.start_loop();
-        state.scope(|state| Memory::possibly(state, |state| exec_block(state, &stmt.body)))?;
-        state.output.goto(pos);
-        state.output.end_loop();
+        if state.memory.get(pos) == CellState::Unknown {
+            state.output.goto(pos);
+            state.output.start_loop();
+            state.scope(|state| Memory::possibly(state, |state| exec_block(state, &stmt.body)))?;
+            state.output.goto(pos);
+            state.output.end_loop();
+        }
         Ok(())
     }
 

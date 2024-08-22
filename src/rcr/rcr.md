@@ -189,7 +189,7 @@ in memory or an array of values in memory. A literal is a compile-time constant.
 A function is a block of code which takes parameters and produces an optional
 return target.
 
-Here are some statement types:
+Here are all statement types:
 
 ```rs
 // BUILTIN — Calls a builtin function
@@ -230,6 +230,8 @@ mut a;
 let [h e l o w r d] = "helowrd";
 let hello_world[] = "Hello, world!";
 let a[5..] = "this string better be at least 5 bytes long";
+let [a b c d _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ e=78 f=49] =
+  "not enough bytes maybe";
 let space = " ";
 
 // GOTO — Goes to the specified cell in memory
@@ -262,6 +264,174 @@ goto a;
 unsafe assert::is_zero a; // tells the compiler `a` is definitely zero
 assert::is_unknown a; // tells the compiler `a` will need to be zeroed
 ```
+
+Here are all target types:
+
+```rs
+// INTEGER — A plain integer
+3
+-4
+
+// LOCAL — A variable
+a
+b
+hello_world
+space
+
+// ARRAY — An array of targets
+[3 -4]
+[4 hello_world]
+[5 6 7 23 (mut a)]
+
+// STRING — A literal string
+"hello world"
+"these can be escaped: \\ \n \r \""
+"all other escapes fail"
+
+// RELATIVE — A cell relative to the cursor's position
+//
+// This type of target is highly volatile and should only be used after a goto
+// statement.
+@       // this cell
+<<<     // the cell three cells to the left of this one
+>78     // the cell 78 cells to the right of this one
+
+// LET BINDING — The local(s) created by a `let` or `mut` binding
+(let a)
+(mut [h i ...] = "hi world")
+(let result = 23)
+
+// FUNCTION RETURN VALUE — The return value of a function
+(zero a)
+(mult a (mut b = 23))
+
+// BLOCK — The value of the last statement in a block
+//
+// The last statement must be a `let` binding or a function call
+{ mult a a (mut result); inc result; add 78 result }
+{ while a { inc b b b; dec a; }; mult 2 b }
+
+// INDEX — An index into any other target
+//
+// Arrays are zero-indexed
+a.0
+[(mut x) (mut y)].1
+```
+
+Literals are like targets, but restricted to integers `3` `-4`, strings
+`"hello"`, `"with an \"escape\""`, and integer arrays `[3 4 -78]`.
+
+Here are some function declarations:
+
+```rs
+// A function declaration is composed of three parts:
+//
+// 1. The parameters of a function define what values it takes, their types,
+//    default values, destructuring patterns, and mutabilities.
+// 2. The body of a function executes the main script.
+// 3. The return value of a function provides a target for `(...)` targets.
+//
+// The return value has access to the parameters, but not to locals created in
+// the function body.
+
+// empty functions can use a semicolon instead of `{}`
+fn do_nothing();
+
+// this takes an immutable argument
+fn println(a) {
+  write a;
+  write "\n";
+}
+
+// this takes a mutable argument
+fn zero(mut a) {
+  while a {
+    dec a;
+  }
+}
+
+// this has a return value
+fn add_and_zero(mut a, mut b) -> b {
+  while a {
+    dec a;
+    inc b;
+  }
+}
+
+// this has an array parameter
+fn println_all(a[]) {
+  for item in a {
+    write item;
+  }
+  write "\n";
+}
+
+// this has a destructured exact-length array parameter
+fn zero_pair(mut [a b]) {
+  zero a;
+  zero b;
+}
+
+// this has a destructured inexact-length array parameter
+fn zero_pair_and_ignore_more(mut [a b ...]) {
+  zero a;
+  zero b;
+}
+
+// this has several parameters, a return value, and no body
+fn many(a, mut b, c = (add_and_zero 7 8), d[5]) -> d;
+
+// this has a rest parameter
+fn println_rest(...a[]) {
+  for x in a {
+    write x;
+  }
+  write "\n";
+
+  // OR:
+
+  println_all a;
+}
+
+fn println_repeat(mut count, ...text[]) {
+  while count {
+    dec count;
+    printls_rest ...text;
+  }
+}
+
+fn into_is_nonzero(mut a, mut result = 0) -> result {
+  // this statement is compiled away if `result` is already zero
+  zero result;
+
+  while a {
+    zero a;
+    inc result;
+  }
+}
+
+fn clone(a, mut b = 0) -> b {
+  zero b;
+
+  mut c;
+  while a {
+    unsafe dec a;
+    inc b c;
+  }
+  while c {
+    dec c;
+    unsafe inc a;
+  }
+}
+
+fn is_nonzero(a, mut result = 0) -> result {
+  into_is_nonzero (clone a) result;
+}
+```
+
+# OLD DOCUMENTATION
+
+Ignore everything below this.
 
 ## Reserved Words
 
@@ -300,7 +470,7 @@ assert::is_unknown a; // tells the compiler `a` will need to be zeroed
 ## Function Declarations
 
 ```
-fn hello_world () {
+fn hello_world() {
   let a[_] = "hello world";
 
   each q in a {
@@ -309,7 +479,7 @@ fn hello_world () {
 }
 
 // `->` is not necessary, but specifies a return target for `(...)` expressions
-fn add_and_zero (mut source, mut target) -> target {
+fn add_and_zero(mut source, mut target) -> target {
   while source {
     dec source;
     inc target;
