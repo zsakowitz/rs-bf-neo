@@ -981,6 +981,16 @@ mod error {
         /// }
         /// ```
         ArrayParamIncorrectSize,
+        /// The function `assert::is_zero` was called without the `unsafe` keyword.
+        ///
+        /// ```
+        /// fn main() {
+        ///   mut a = 2;
+        ///   assert::is_zero a;
+        ///   // this could result in incorrect behavior, and thus errors
+        /// }
+        /// ```
+        SafeZeroAssertion,
     }
 
     pub type Result<T> = std::result::Result<T, Error>;
@@ -1130,6 +1140,9 @@ mod main {
                 match name {
                     Builtin::Goto => unreachable!(),
                     Builtin::Assert(cell_state) => {
+                        if cell_state == CellState::Zeroed && !stmt.is_unsafe {
+                            e!(SafeZeroAssertion)
+                        }
                         for pos in args {
                             state.memory.assert(pos, cell_state);
                         }

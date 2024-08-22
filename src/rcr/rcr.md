@@ -181,6 +181,88 @@ fn main() {
 (The Rust syntax highlighter is used since RCR and Rust have similar keywords,
 but the exact syntax is quite different.)
 
+# Syntax
+
+RCR is made up of four crucial item types: statements, targets, literals, and
+functions. A statement is a piece of procedural code. A target points to a value
+in memory or an array of values in memory. A literal is a compile-time constant.
+A function is a block of code which takes parameters and produces an optional
+return target.
+
+Here are some statement types:
+
+```rs
+// BUILTIN — Calls a builtin function
+//
+// `inc`, `dec`, and `read` require their argument(s) to be mutable.
+// `write`'s argument may be readonly.
+inc a;
+dec a;
+read a;
+write a;
+
+// WHILE LOOP — Executes code while `var` is nonzero
+//
+// If `var` is an expression, it is computed once and the memory cell it points
+// to is checked. To create a true `while` loop, update the condition at the end
+// of each loop iteration.
+while var { ... }
+
+// FOR LOOP — Executes code for each element in an array.
+//
+// This is, practically speaking, a compile-time macro, since arrays do not
+// exist in brainfuck.
+//
+// The `mut` keyword can be appended to make the item mutable within the loop.
+// If an item is marked `mut` on a readonly array, an error is thrown.
+for item in array { ... }
+for mut item in array { ... }
+
+// LET BINDING — Creates a local stored in memory
+//
+// Destructuring is supported. `let` bindings may be assigned integers, arrays
+// of integers, or UTF-8 strings. If a single-byte string is assigned to a
+// scalar local, the single byte's value will be used. Uninitialized bindings
+// default to zero.
+//
+// The `mut` keyword may replace `let` to create a mutable binding.
+mut a;
+let [h e l o w r d] = "helowrd";
+let hello_world[] = "Hello, world!";
+let a[5..] = "this string better be at least 5 bytes long";
+let space = " ";
+
+// GOTO — Goes to the specified cell in memory
+//
+// `goto` expects a single local to be passed to it.
+goto a;
+
+// ASSERTION — Asserts the value of a local to the compiler
+//
+// The compiler automatically zeroes all memory cells when a block of code is
+// exited to make future assignments easier. It uses simple heuristics to
+// determine when this is necessary, and these are correct almost all the time.
+// If you ever need advanced control, these functions will do it.
+//
+// Misusing `assert::is_zero` will result in incorrect code. This means that it
+// must always be called with `unsafe`. For a safe variant, use a `while` loop
+// with no body, which will hang instead of causing UB if the value is nonzero.
+//
+// Misusing `assert::is_unknown` will result in correct, but lengthier code.
+//
+// The compiler's default heuristics:
+//
+// - The target of a `while` loop is zero when the loop exits.
+// - A call to `inc`, `dec`, or `read` marks all targets as unknown.
+// - If a local is zero at the end of both branches of a `while` loop, it is
+//   zero when the loop exits. Otherwise, it is unknown.
+//
+// These heuristics will never mark a possible-nonzero value as definitely zero,
+// although values which are definitely zero may be marked as possibly nonzero.
+unsafe assert::is_zero a; // tells the compiler `a` is definitely zero
+assert::is_unknown a; // tells the compiler `a` will need to be zeroed
+```
+
 ## Reserved Words
 
 - whitespace
