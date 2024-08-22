@@ -4,6 +4,6 @@ pub use fixed::*;
 
 use std::ops::DerefMut;
 
-pub trait Tape<T>: DerefMut<Target = T> {
+pub trait Tape: DerefMut {
     fn shift(&mut self, amount: isize);
 }

@@ -45,7 +45,7 @@ impl<const N: usize, T> DerefMut for FixedLengthTape<N, T> {
     }
 }
 
-impl<const N: usize, T> Tape<T> for FixedLengthTape<N, T> {
+impl<const N: usize, T> Tape for FixedLengthTape<N, T> {
     fn shift(&mut self, amount: isize) {
         let new_index = self
             .index

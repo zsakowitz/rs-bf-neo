@@ -4,7 +4,7 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub struct NoInput<T>(PhantomData<T>);
+pub struct NoInput<T>(PhantomData<fn() -> T>);
 
 impl<T> Default for NoInput<T> {
     fn default() -> Self {
