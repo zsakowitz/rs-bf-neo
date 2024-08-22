@@ -3,14 +3,119 @@ mod output {
         emit::error::{e, Result},
         syntax::Offset,
     };
+    use std::{
+        mem::replace,
+        ops::{BitAnd, BitOr},
+    };
 
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct CommentLevel(u8);
+
+    impl CommentLevel {
+        pub const NONE: CommentLevel = CommentLevel(0);
+
+        pub const FN: CommentLevel = CommentLevel(1 << 0);
+        pub const FN_PARAMS: CommentLevel = CommentLevel(1 << 1);
+        pub const FN_ALL: CommentLevel = CommentLevel(1 << 0 | 1 << 1);
+
+        pub const CLEANUP: CommentLevel = CommentLevel(1 << 2);
+
+        pub const FOR: CommentLevel = CommentLevel(1 << 3);
+        pub const FOR_EACH: CommentLevel = CommentLevel(1 << 4);
+        pub const FOR_ALL: CommentLevel = CommentLevel(1 << 3 | 1 << 4);
+
+        pub const ALL: CommentLevel = CommentLevel(0b11111);
+
+        fn matches(self, level: CommentLevel) -> bool {
+            self.0 & level.0 == level.0
+        }
+    }
+
+    impl BitOr for CommentLevel {
+        type Output = Self;
+
+        fn bitor(self, rhs: Self) -> Self::Output {
+            Self(self.0 | rhs.0)
+        }
+    }
+
+    impl BitAnd for CommentLevel {
+        type Output = Self;
+
+        fn bitand(self, rhs: Self) -> Self::Output {
+            Self(self.0 & rhs.0)
+        }
+    }
+
+    #[derive(Clone, Debug)]
     pub struct Output {
         data: String,
         pos: usize,
+        comment_level: CommentLevel,
     }
 
+    #[must_use]
+    enum BlockStartInner {
+        Ignore,
+        Prev(String),
+    }
+
+    #[must_use]
+    pub struct BlockStart(BlockStartInner);
+
     impl Output {
+        pub fn new(comment_level: CommentLevel) -> Self {
+            Self {
+                data: String::new(),
+                pos: 0,
+                comment_level,
+            }
+        }
+
+        fn comment(text: &str) -> String {
+            text.replace(['[', ']', '<', '>', '+', '-', '.', ',', '#', '!'], "")
+        }
+
+        #[must_use]
+        pub fn block_start(&mut self, level: CommentLevel) -> BlockStart {
+            if !self.comment_level.matches(level) {
+                return BlockStart(BlockStartInner::Ignore);
+            }
+            let prev = replace(&mut self.data, String::new());
+            BlockStart(BlockStartInner::Prev(prev))
+        }
+
+        pub fn block_end<'a>(&'a mut self, block: BlockStart, label: impl FnOnce() -> &'a str) {
+            let BlockStart(BlockStartInner::Prev(mut prev)) = block else {
+                return;
+            };
+            while self.data.ends_with("\n") {
+                self.data.pop();
+            }
+            while prev.ends_with("\n") {
+                prev.pop();
+            }
+            let label = Output::comment(label());
+
+            let inner = replace(&mut self.data, prev);
+            if !self.data.is_empty() {
+                self.data += "\n";
+            }
+            if inner.contains("\n") {
+                self.data += &label;
+                self.data += " {\n  ";
+                self.data += &inner.replace("\n", "\n  ");
+                self.data += "\n}";
+            } else {
+                self.data += &label;
+                if !inner.is_empty() {
+                    self.data += " ";
+                    self.data += &inner;
+                }
+            }
+            self.data += "\n";
+        }
+
         pub fn start_loop(&mut self) {
             self.data += "[";
         }
@@ -75,7 +180,7 @@ mod output {
         }
 
         pub fn dec_current(&mut self) {
-            self.data += "+";
+            self.data += "-";
         }
 
         pub fn read_current(&mut self) {
@@ -278,7 +383,7 @@ mod alloc {
         }
 
         fn set_state(&mut self, pos: usize, state: CellState) {
-            assert!(pos <= self.cells.len(), "pos exists in the map");
+            assert!(pos < self.cells.len(), "pos exists in the map");
             if let Some(ref mut x) = self.previous {
                 x.entry(pos).or_insert(self.cells[pos]);
             }
@@ -311,7 +416,9 @@ mod alloc {
         /// This is used to emit `while {}` constructs.
         pub fn possibly<T>(state: &mut State, f: impl FnOnce(&mut State) -> T) -> T {
             let prev_map = state.memory.previous.replace(HashMap::new());
+            println!("before {:?}", state.memory);
             let result = f(state);
+            println!("after {:?}", state.memory);
             // we put it there so it should still exist
             let this_map = mem::replace(&mut state.memory.previous, prev_map).unwrap();
             for (index, old_state) in this_map {
@@ -336,10 +443,6 @@ mod alloc {
     impl Locals {
         pub fn get(&self, name: Name) -> Option<&Local> {
             self.named.get(&name)
-        }
-
-        pub fn remove(&mut self, name: Name) -> Option<Local> {
-            self.named.remove(&name)
         }
 
         pub fn set(&mut self, name: Name, local: Local) -> &Local {
@@ -411,6 +514,7 @@ mod alloc {
             value: &Option<Literal>,
         ) -> Result<Self> {
             let pos = memory.cells.len();
+            memory.create_single();
             let content = Content::Single(pos);
             match value {
                 None => {}
@@ -420,9 +524,6 @@ mod alloc {
                 }
                 Some(_) => e!(ScalarInitializedWithArray),
             }
-
-            // only allocate memory after we've thrown all possible errors
-            memory.create_single();
 
             Ok(content)
         }
@@ -437,6 +538,10 @@ mod alloc {
             let pos_base = memory.cells.len();
             let pos: Vec<_> = (0..memory_needed).map(|x| pos_base + x).collect();
 
+            for _ in 0..memory_needed {
+                memory.create_single();
+            }
+
             match value {
                 None => {}
                 Some(Literal::Int(_)) => e!(ArrayInitializedWithScalar),
@@ -450,11 +555,6 @@ mod alloc {
                         init(output, memory, pos[i], value)
                     }
                 }
-            }
-
-            // only allocate memory after we've thrown all possible errors
-            for _ in 0..memory_needed {
-                memory.create_single();
             }
 
             Ok(Content::Array(pos))
@@ -494,7 +594,9 @@ mod alloc {
             let pos_base = memory.cells.len();
             let pos: Vec<_> = (0..memory_needed).map(|x| pos_base + x).collect();
             let mut is_init: Vec<_> = (0..memory_needed).map(|_| false).collect();
-
+            for _ in 0..memory_needed {
+                memory.create_single();
+            }
             match &value {
                 None => {}
                 Some(Literal::Int(_)) => e!(ArrayInitializedWithScalar),
@@ -533,11 +635,6 @@ mod alloc {
                 })
             {
                 e!(DestructuredElementLeftUninitialized)
-            }
-
-            // only allocate memory after we've thrown all possible errors
-            for _ in 0..memory_needed {
-                memory.create_single();
             }
 
             Ok(pos)
@@ -831,6 +928,17 @@ mod error {
         /// }
         /// ```
         TargetedFunctionWithoutReturn,
+        /// A low-level block was used as a target
+        ///
+        /// ```
+        /// fn zero(mut a) -> (bf a[-]);
+        ///
+        /// fn main() {
+        ///   mut a = 78;
+        ///   zero a;
+        /// }
+        /// ```
+        TargetedLowLevel,
         /// The built-in `goto` function must be passed a single scalar value
         ///
         /// ```
@@ -895,25 +1003,54 @@ mod error {
 }
 
 mod main {
-    use crate::rcr::{
-        emit::{
-            alloc::{stmt_let, Content, Local, Locals, Memory},
-            error::{e, rv, Error, Result},
-            output::Output,
-            scope::Scope,
-        },
-        syntax::{
-            ArraySize, Binding, BindingInDestructure, Builtin, Call, FnDeclaration, FnName, For,
-            Kind, ParseTree, Script, Statement, Target, TargetInner, While,
+    use crate::{
+        builder::CellState,
+        rcr::{
+            emit::{
+                alloc::{stmt_let, Content, Local, Locals, Memory},
+                error::{e, rv, Error, Result},
+                output::{CommentLevel, Output},
+                scope::Scope,
+            },
+            syntax::{
+                ArraySize, Bf, Binding, BindingInDestructure, Builtin, Call, FnDeclaration, FnName,
+                For, Kind, NameManager, ParseTree, Script, Statement, Target, TargetInner, While,
+            },
         },
     };
 
     #[derive(Debug)]
-    pub struct State<'output, 'memory, 'locals, 'scope> {
+    pub struct State<'output, 'memory, 'locals, 'scope, 'names> {
         pub output: &'output mut Output,
         pub memory: &'memory mut Memory,
         pub locals: &'locals mut Locals,
         pub scope: &'scope Scope<'scope>,
+        pub names: &'names NameManager,
+    }
+
+    impl<'output, 'memory, 'locals, 'scope, 'names> State<'output, 'memory, 'locals, 'scope, 'names> {
+        pub fn scope<T>(
+            &mut self,
+            f: impl for<'a, 'b, 'c> FnOnce(&mut State<'a, 'b, 'c, 'scope, 'names>) -> Result<T>,
+        ) -> Result<T> {
+            let mut next = State {
+                output: &mut self.output,
+                memory: &mut self.memory,
+                locals: &mut self.locals.clone(),
+                scope: self.scope,
+                names: self.names,
+            };
+
+            let memory_head = next.memory.len();
+
+            let value = f(&mut next);
+
+            let block = self.output.block_start(CommentLevel::CLEANUP);
+            self.memory.clear(&mut self.output, memory_head..);
+            self.output.block_end(block, || "@@cleanup");
+
+            value
+        }
     }
 
     enum Retval {
@@ -1001,18 +1138,21 @@ mod main {
                         for pos in args {
                             state.output.goto(pos);
                             state.output.inc_current();
+                            state.memory.assert(pos, CellState::Unknown);
                         }
                     }
                     Builtin::Dec => {
                         for pos in args {
                             state.output.goto(pos);
                             state.output.dec_current();
+                            state.memory.assert(pos, CellState::Unknown);
                         }
                     }
                     Builtin::Read => {
                         for pos in args {
                             state.output.goto(pos);
                             state.output.read_current();
+                            state.memory.assert(pos, CellState::Unknown);
                         }
                     }
                     Builtin::Write => {
@@ -1040,29 +1180,30 @@ mod main {
         };
         state.output.goto(pos);
         state.output.start_loop();
-        Memory::possibly(state, |state| exec_block(state, &stmt.body))?;
+        state.scope(|state| Memory::possibly(state, |state| exec_block(state, &stmt.body)))?;
         state.output.goto(pos);
         state.output.end_loop();
         Ok(())
     }
 
     fn stmt_for(state: &mut State, stmt: &For) -> Result<()> {
+        let block = state.output.block_start(CommentLevel::FOR);
         let local = exec_target(state, &stmt.array)?;
         let content = local.assert_mutability_or_unsafe(stmt.mutable, false)?;
         let pos = match content {
             Content::Single(_) => e!(IterationOverScalar),
             Content::Array(x) => x,
         };
-        let prev = state.locals.remove(stmt.bound);
         for pos in pos {
-            let local = Content::Single(*pos).into_local(stmt.mutable);
-            state.locals.set(stmt.bound, local);
-            exec_block(state, &stmt.body)?;
-            // TODO: ensure zero-tracking is valid in for loops
+            let block = state.output.block_start(CommentLevel::FOR_EACH);
+            state.scope(|state| {
+                let local = Content::Single(*pos).into_local(stmt.mutable);
+                state.locals.set(stmt.bound, local);
+                exec_block(state, &stmt.body)
+            })?;
+            state.output.block_end(block, || "@@each");
         }
-        if let Some(x) = prev {
-            state.locals.set(stmt.bound, x);
-        }
+        state.output.block_end(block, || "@@for");
         Ok(())
     }
 
@@ -1106,7 +1247,7 @@ mod main {
         }
     }
 
-    fn exec_fn_call(state_caller: &mut State, stmt: &Call, f: &FnDeclaration) -> Result<Retval> {
+    fn exec_fn_call(state: &mut State, stmt: &Call, f: &FnDeclaration) -> Result<Retval> {
         // Stages of function execution
         //
         // These stages ensure that function can only return values which depend on their immediate
@@ -1118,21 +1259,25 @@ mod main {
         // 4. Clean up body locals
         // 5. Execute return value
 
-        let scope_fn = state_caller.scope.child(&f.body.fns)?;
+        let block_main = state.output.block_start(CommentLevel::FN);
+
+        let scope_fn = state.scope.child(&f.body.fns)?;
 
         // 1. Resolve parameter values and check their types and mutability
+
+        let block = state.output.block_start(CommentLevel::FN_PARAMS);
 
         let mut args = Vec::new();
         for arg in stmt.args.iter() {
             match arg {
                 Some(target) => {
-                    args.push(Some(exec_target(state_caller, target)?));
+                    args.push(Some(exec_target(state, target)?));
                 }
                 None => args.push(None),
             }
         }
         if let Some(target) = &stmt.rest {
-            let local = exec_target(state_caller, target)?;
+            let local = exec_target(state, target)?;
             match local.content {
                 Content::Single(_) => e!(SpreadScalar),
                 Content::Array(arr) => {
@@ -1147,11 +1292,12 @@ mod main {
         }
 
         let mut locals_args = Locals::default();
-        let mut state_args = State {
+        let mut state = State {
             locals: &mut locals_args,
-            memory: state_caller.memory,
-            output: state_caller.output,
+            memory: state.memory,
+            output: state.output,
             scope: &scope_fn,
+            names: state.names,
         };
 
         args.reverse();
@@ -1160,12 +1306,12 @@ mod main {
             let arg = match args.pop().flatten() {
                 Some(x) => x,
                 None => match param.default {
-                    Some(ref default) => exec_target(&mut state_args, default)?,
+                    Some(ref default) => exec_target(&mut state, default)?,
                     None => e!(NoDefaultValue),
                 },
             };
 
-            let content = arg.assert_mutability_or_unsafe(param.mutable, false)?;
+            let content = arg.assert_mutability_or_unsafe(param.mutable, stmt.is_unsafe)?;
             let arg = || content.clone().into_local(param.mutable);
 
             match param.binding {
@@ -1176,7 +1322,7 @@ mod main {
                     if let Content::Array(_) = content {
                         e!(ScalarInitializedWithArray)
                     }
-                    state_args.locals.set(name, arg());
+                    state.locals.set(name, arg());
                 }
                 Binding::Standard {
                     name,
@@ -1199,7 +1345,7 @@ mod main {
                         }
                         ArraySize::Inferred => {}
                     }
-                    state_args.locals.set(name, arg());
+                    state.locals.set(name, arg());
                 }
                 Binding::Destructured {
                     ref els,
@@ -1236,14 +1382,14 @@ mod main {
                             Some(x) => *x,
                             None => match default {
                                 Some(default) => Content::create_single_by_pos(
-                                    state_args.output,
-                                    state_args.memory,
+                                    state.output,
+                                    state.memory,
                                     *default,
                                 ),
                                 None => e!(NoDefaultValue),
                             },
                         };
-                        state_args
+                        state
                             .locals
                             .set(*name, Content::Single(pos).into_local(param.mutable));
                     }
@@ -1270,49 +1416,36 @@ mod main {
                 pos.push(arg);
             }
 
-            state_args.locals.set(
+            state.locals.set(
                 param_rest.name,
                 Content::Array(pos).into_local(param_rest.mutable),
             );
         }
 
-        // 2. Create body locals (clone from arguments locals)
+        state.output.block_end(block, || "@@params");
 
-        let mut state_body = State {
-            locals: &mut state_args.locals.clone(),
-            memory: state_args.memory,
-            output: state_args.output,
-            scope: &scope_fn,
-        };
+        // 2. Execute body
 
-        let locals_head = state_body.memory.len();
+        state.scope(|state| exec_stmts_without_script(state, &f.body.stmts))?;
 
-        // 3. Execute function body
+        // 3. Execute return value
 
-        exec_stmts_without_script(&mut state_body, &f.body.stmts)?;
-
-        // 4. Clean up body locals
-
-        state_body
-            .memory
-            .clear(&mut state_body.output, locals_head..);
-
-        drop(state_body);
-
-        // 5. Execute return value
-
-        Ok(match f.returns {
-            Some(ref target) => Retval::Some(exec_target(&mut state_args, target)?),
+        let val = Ok(match f.returns {
+            Some(ref target) => {
+                let block = state.output.block_start(CommentLevel::FN_PARAMS);
+                let v = Retval::Some(exec_target(&mut state, target)?);
+                state.output.block_end(block, || "@@retval");
+                v
+            }
             None => rv!(TargetedFunctionWithoutReturn),
-        })
-    }
+        });
 
-    // fn exec(state: &mut State, stmts: &[Statement]) -> Result<Option<Local>> {
-    //     let original_memory_len = state.memory.len();
-    //     // exec stmts
-    //     state.memory.clear(&mut state.output, original_memory_len..);
-    //     Ok(())
-    // }
+        state
+            .output
+            .block_end(block_main, || state.names.lookup(&f.name).unwrap());
+
+        val
+    }
 
     fn exec_stmts_without_script(state: &mut State, stmts: &[Statement]) -> Result<Retval> {
         let mut output = rv!(TargetedEmptyBlock);
@@ -1337,10 +1470,18 @@ mod main {
                     stmt_for(state, stmt)?;
                     rv!(TargetedForLoop)
                 }
+                Statement::Bf(stmt) => {
+                    stmt_bf(state, stmt)?;
+                    rv!(TargetedLowLevel)
+                }
             }
         }
 
         Ok(output)
+    }
+
+    fn stmt_bf(state: &mut State, stmt: &Bf) -> Result<()> {
+        todo!()
     }
 
     fn exec_block(state: &mut State, script: &Script) -> Result<Retval> {
@@ -1349,12 +1490,13 @@ mod main {
             memory: state.memory,
             output: state.output,
             scope: &state.scope.child(&script.fns)?,
+            names: state.names,
         };
 
         exec_stmts_without_script(state, &script.stmts)
     }
 
-    pub fn emit(parse: &ParseTree) -> Result<String> {
+    pub fn emit(parse: &ParseTree, comment_level: CommentLevel) -> Result<String> {
         let scope = Scope::new(&parse.fns)?;
 
         let Some(main) = &parse.names.get("main") else {
@@ -1370,17 +1512,24 @@ mod main {
             e!(MainReturns)
         }
 
-        let mut output = Output::default();
+        let mut output = Output::new(comment_level);
 
         let mut state = State {
             output: &mut output,
             locals: &mut Locals::default(),
             memory: &mut Memory::default(),
             scope: &scope,
+            names: &parse.names,
         };
 
-        exec_block(&mut state, &main.body).map(|_| output.into_data())
+        exec_block(&mut state, &main.body)?;
+        let mut data = output.into_data();
+        while data.ends_with("\n") {
+            data.pop();
+        }
+        Ok(data)
     }
 }
 
 pub use main::emit;
+pub use output::CommentLevel;

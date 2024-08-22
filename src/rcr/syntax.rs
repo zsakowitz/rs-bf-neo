@@ -1,8 +1,7 @@
+use crate::builder::CellState;
 use pest::{error::Error, iterators::Pair, Parser};
 use pest_derive::Parser;
 use std::{collections::HashMap, fmt};
-
-use crate::builder::CellState;
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Name(pub(super) u32);
@@ -120,8 +119,8 @@ pub enum Builtin {
 impl Builtin {
     pub fn mutates(self) -> bool {
         match self {
-            Self::Assert(_) | Self::Goto => false,
-            Self::Dec | Self::Inc | Self::Read | Self::Write => true,
+            Self::Assert(_) | Self::Goto | Self::Write => false,
+            Self::Dec | Self::Inc | Self::Read => true,
         }
     }
 }
@@ -258,6 +257,28 @@ pub enum Statement {
     For(For),
     While(While),
     Call(Call),
+    Bf(Bf),
+}
+
+#[derive(Clone, Debug, Hash)]
+pub struct Bf {
+    pub is_unsafe: bool,
+    pub stmts: Vec<LowLevel>,
+}
+
+#[derive(Clone, Debug, Hash)]
+pub enum LowLevel {
+    Shl,
+    Shr,
+    Inc,
+    Dec,
+    Read,
+    Write,
+    Goto(Name),
+    Loop(Vec<LowLevel>),
+    Block(Script),
+    Stmt(Box<Statement>),
+    Loc(Name),
 }
 
 #[derive(Clone, Debug, Hash)]
@@ -294,6 +315,7 @@ struct MyParser;
 #[derive(Clone, Debug)]
 pub struct NameManager {
     data: HashMap<String, Name>,
+    inv: HashMap<Name, String>,
     next: u32,
 }
 
@@ -301,6 +323,7 @@ impl NameManager {
     fn new() -> Self {
         Self {
             data: HashMap::new(),
+            inv: HashMap::new(),
             next: 0,
         }
     }
@@ -309,13 +332,20 @@ impl NameManager {
         self.data.get(name).copied()
     }
 
-    pub fn get_or_create(&mut self, name: &str) -> Name {
-        if let Some(x) = self.data.get(name) {
+    pub fn lookup(&self, name: &Name) -> Option<&str> {
+        self.inv.get(name).map(|x| &**x)
+    }
+
+    pub fn get_or_create(&mut self, str: &str) -> Name {
+        if let Some(x) = self.data.get(str) {
             return *x;
         }
         let value = self.next;
         self.next += 1;
-        *self.data.entry(name.to_string()).or_insert(Name(value))
+        let name = Name(value);
+        self.data.entry(str.to_string()).or_insert(name);
+        self.inv.entry(name).or_insert_with(|| str.to_string());
+        Name(value)
     }
 }
 
@@ -338,6 +368,35 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
         .collect();
 
     return Ok(ParseTree { fns, names });
+
+    /// Expects a `Rule::ll_any` to be passed
+    fn parse_ll(names: &mut NameManager, pair: Pair<Rule>) -> LowLevel {
+        match pair.as_rule() {
+            Rule::ll_shl => LowLevel::Shl,
+            Rule::ll_shr => LowLevel::Shr,
+            Rule::ll_inc => LowLevel::Inc,
+            Rule::ll_dec => LowLevel::Dec,
+            Rule::ll_read => LowLevel::Read,
+            Rule::ll_write => LowLevel::Write,
+            Rule::ll_goto => {
+                LowLevel::Goto(names.get_or_create(pair.into_inner().next().unwrap().as_str()))
+            }
+            Rule::ll_loop => {
+                LowLevel::Loop(pair.into_inner().map(|x| parse_ll(names, x)).collect())
+            }
+            Rule::ll_block => {
+                LowLevel::Block(parse_script(names, pair.into_inner().next().unwrap()))
+            }
+            Rule::ll_stmt => LowLevel::Stmt(Box::new(parse_stmt(
+                names,
+                pair.into_inner().next().unwrap(),
+            ))),
+            Rule::ll_loc => {
+                LowLevel::Loc(names.get_or_create(pair.into_inner().next().unwrap().as_str()))
+            }
+            _ => unreachable!(),
+        }
+    }
 
     fn parse_offset(s: &str) -> Offset {
         let direction = match s {
@@ -498,6 +557,16 @@ pub fn parse(input: &str) -> Result<ParseTree, Error<Rule>> {
                     mutable,
                     binding: parse_let_bindable(names, let_bindable),
                     value: let_init.map(parse_literal),
+                })
+            }
+            Rule::stmt_bf => {
+                let mut inner = pair.into_inner();
+                let is_unsafe = inner.next().unwrap().into_inner().next().is_some();
+                inner.next().unwrap();
+
+                Statement::Bf(Bf {
+                    is_unsafe,
+                    stmts: inner.map(|x| parse_ll(names, x)).collect(),
                 })
             }
             _ => todo!(),

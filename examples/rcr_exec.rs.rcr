@@ -1,9 +1,36 @@
+fn zero(mut a) {
+  while a {
+    dec a;
+  }
+}
+
+fn add_into(mut a, ...mut b[]) {
+  while a {
+    dec a;
+    for mut b in b {
+      inc b;
+    }
+  }
+}
+
+fn clone(a, mut b = 0) -> b {
+  unsafe add_into a (mut c);
+  unsafe add_into c a b;
+}
+
+fn main_1() {
+  let a = 4;
+  clone a (mut b);
+  goto a;
+}
+
+fn main_2() {
+  mut a = 3;
+  while 0 {
+    zero a;
+  }
+}
+
 fn main() {
-  mut [a b];
-  inc a;
-  inc b;
-  inc a;
-  // inc [a b];
-  inc a a a;
-  write a;
+  main_2;
 }

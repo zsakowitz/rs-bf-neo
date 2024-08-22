@@ -11,6 +11,7 @@ builtin = @{
   | "goto"
   | "assert::is_zero"
   | "assert::is_unknown"
+  | "assert::cursor"
 }
 
 reserved = @{
@@ -29,6 +30,7 @@ reserved = @{
   | "return"
   | "break"
   | "continue"
+  | "bf"
 }
 
 name_single = @{ !(reserved ~ (!ID_CONTINUE | "::")) ~ (ID_START ~ ID_CONTINUE*) }
@@ -70,13 +72,41 @@ call_unsafe = { keyword_unsafe? }
 arg_list   = { arg* }
 arg_spread = { ("..." ~ target)? }
 
+ll_shl   =  { "<" }
+ll_shr   =  { ">" }
+ll_inc   =  { "+" }
+ll_dec   =  { "-" }
+ll_read  =  { "," }
+ll_write =  { "." }
+ll_goto  =  { name }
+ll_loop  =  { "[" ~ ll_any* ~ "]" }
+ll_block =  { "$" ~ block }
+ll_stmt  =  { "$" ~ stmt_with_proper_semi }
+ll_loc   =  { "@" ~ name }
+ll_any   = _{
+    ll_shl
+  | ll_shr
+  | ll_inc
+  | ll_dec
+  | ll_read
+  | ll_write
+  | ll_goto
+  | ll_loop
+  | ll_stmt
+  | ll_block
+  | ll_loc
+}
+
 maybe_mut = { keyword_mut? }
 let_mut   = { keyword_let | keyword_mut }
+
+bf_unsafe = { keyword_unsafe? }
 
 stmt_while = { keyword_while ~ target ~ block }
 stmt_for   = { keyword_for ~ maybe_mut ~ name ~ keyword_in ~ target ~ block }
 stmt_call  = { call_unsafe ~ fn_name ~ arg_list ~ arg_spread }
 stmt_let   = { let_mut ~ let_bindable ~ let_init? }
+stmt_bf    = { bf_unsafe ~ keyword_bf ~ ll_any* }
 
 let_bindable      = _{ let_dest | let_bind_standard }
 let_bind_standard =  { name ~ let_array_size? }
@@ -92,7 +122,7 @@ let_array_size_dots =  { ".."? }
 let_array_size      =  { "[" ~ (uint ~ let_array_size_dots)? ~ "]" }
 let_init            = _{ "=" ~ literal }
 
-stmt_needs_semi        = _{ stmt_call | stmt_let }
+stmt_needs_semi        = _{ stmt_call | stmt_let | stmt_bf }
 stmt_no_mandatory_semi = _{ stmt_while | stmt_for }
 stmt_any               = _{ stmt_needs_semi | stmt_no_mandatory_semi }
 stmt_with_proper_semi  = _{ fn | (stmt_needs_semi ~ semi) | (stmt_no_mandatory_semi ~ semi?) }
@@ -110,7 +140,7 @@ block_no_semi = _{ "{" ~ stmt_list_no_semi ~ "}" }
 fn_arg_mut     = { keyword_mut? }
 fn_arg         = { fn_arg_mut ~ let_bindable ~ ("=" ~ target)? }
 fn_normal_args = { fn_arg ~ ("," ~ fn_arg)* }
-fn_rest        = { "..." ~ fn_arg_mut ~ name }
+fn_rest        = { "..." ~ fn_arg_mut ~ name ~ "[" ~ "]" }
 fn_args        = {
     "(" ~ fn_rest? ~ ")"
   | "(" ~ fn_normal_args ~ ("," ~ fn_rest?)? ~ ")"
@@ -122,6 +152,7 @@ fn      =  { keyword_fn ~ name ~ fn_args ~ fn_return ~ fn_body }
 
 main = { SOI ~ fn* ~ EOI }
 
+keyword_bf         = @{ "bf" ~ !ID_CONTINUE }
 keyword_mut        = @{ "mut" ~ !ID_CONTINUE }
 keyword_let        = @{ "let" ~ !ID_CONTINUE }
 keyword_fn         = @{ "fn" ~ !ID_CONTINUE }

@@ -1,7 +1,7 @@
 mod emit;
 pub mod syntax;
 
-pub use emit::emit;
+pub use emit::{emit, CommentLevel};
 pub use syntax::parse;
 
 // enum RcrTarget {
